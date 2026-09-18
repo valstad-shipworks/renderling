@@ -1,4 +1,5 @@
 [package]
+publish = ["forgejo"]
 name = "renderling"
 version = "0.6.2"
 edition = "2021"
