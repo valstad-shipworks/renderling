@@ -557,7 +557,8 @@ where
                 let attenuation = intensity / (distance * distance);
                 let radiance =
                     outgoing_radiance(color, albedo, attenuation, v, l, n, metallic, roughness);
-                let shadow = if light.shadow_map_desc_id.is_some() {
+                // Unlit fragments skip the shadow lookup.
+                let shadow = if light.shadow_map_desc_id.is_some() && radiance != Vec3::ZERO {
                     // Shadow is 1.0 when the fragment is in the shadow of this light,
                     // and 0.0 in darkness
                     ShadowCalculation::new(light_slab, light, in_pos, n, l).run_point(
@@ -597,7 +598,7 @@ where
                     metallic,
                     roughness,
                 );
-                let shadow = if light.shadow_map_desc_id.is_some() {
+                let shadow = if light.shadow_map_desc_id.is_some() && radiance != Vec3::ZERO {
                     // Shadow is 1.0 when the fragment is in the shadow of this light,
                     // and 0.0 in darkness
                     ShadowCalculation::new(light_slab, light, in_pos, n, calculation.frag_to_light)
@@ -621,7 +622,7 @@ where
                 let radiance =
                     outgoing_radiance(color, albedo, attenuation, v, l, n, metallic, roughness);
                 let shadow =
-                    if light.shadow_map_desc_id.is_some() {
+                    if light.shadow_map_desc_id.is_some() && radiance != Vec3::ZERO {
                         // Shadow is 1.0 when the fragment is in the shadow of this light,
                         // and 0.0 in darkness
                         ShadowCalculation::new(light_slab, light, in_pos, n, l)

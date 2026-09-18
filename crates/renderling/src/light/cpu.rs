@@ -1039,23 +1039,22 @@ impl Lighting {
                 .array()
         };
 
-        self.lighting_descriptor.modify(
-            |LightingDescriptor {
-                 analytical_lights_array,
-                 shadow_map_atlas_descriptor_id,
-                 update_shadow_map_id,
-                 update_shadow_map_texture_index,
-                 // Don't change the tiling descriptor
-                 light_tiling_descriptor_id: _,
-                 // Don't change the ambient color (set via set_ambient_color)
-                 ambient_color: _,
-             }| {
-                *analytical_lights_array = lights_array;
-                *shadow_map_atlas_descriptor_id = self.shadow_map_atlas.descriptor_id();
-                *update_shadow_map_id = Id::NONE;
-                *update_shadow_map_texture_index = 0;
-            },
-        );
+        let shadow_map_atlas_descriptor_id = self.shadow_map_atlas.descriptor_id();
+        let current = self.lighting_descriptor.get();
+        // `modify` always queues a slab write.
+        let is_current = current.analytical_lights_array == lights_array
+            && current.shadow_map_atlas_descriptor_id == shadow_map_atlas_descriptor_id
+            && current.update_shadow_map_id == Id::NONE
+            && current.update_shadow_map_texture_index == 0;
+        if !is_current {
+            // Tiling descriptor and ambient color stay as they are.
+            self.lighting_descriptor.modify(|descriptor| {
+                descriptor.analytical_lights_array = lights_array;
+                descriptor.shadow_map_atlas_descriptor_id = shadow_map_atlas_descriptor_id;
+                descriptor.update_shadow_map_id = Id::NONE;
+                descriptor.update_shadow_map_texture_index = 0;
+            });
+        }
 
         let buffer = self.light_slab.commit();
         log::trace!("  light slab creation time: {}", buffer.creation_time());

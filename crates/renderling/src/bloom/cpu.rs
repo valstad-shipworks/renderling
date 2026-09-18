@@ -553,7 +553,7 @@ impl Bloom {
             .clone()
     }
 
-    pub(crate) fn render_downsamples(&self, device: &wgpu::Device, queue: &wgpu::Queue) {
+    pub(crate) fn render_downsamples(&self, encoder: &mut wgpu::CommandEncoder) {
         struct DownsampleItem<'a> {
             view: &'a wgpu::TextureView,
             bindgroup: &'a wgpu::BindGroup,
@@ -595,8 +595,6 @@ impl Bloom {
         {
             let title = format!("bloom downsample {i}");
             let label = Some(title.as_str());
-            let mut encoder =
-                device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label });
             {
                 let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label,
@@ -618,11 +616,10 @@ impl Bloom {
                 let id = pixel_size.into();
                 render_pass.draw(0..6, id..id + 1);
             }
-            queue.submit(std::iter::once(encoder.finish()));
         }
     }
 
-    fn render_upsamples(&self, device: &wgpu::Device, queue: &wgpu::Queue) {
+    fn render_upsamples(&self, encoder: &mut wgpu::CommandEncoder) {
         struct UpsampleItem<'a> {
             view: &'a wgpu::TextureView,
             bindgroup: &'a wgpu::BindGroup,
@@ -642,8 +639,6 @@ impl Bloom {
         for (i, UpsampleItem { view, bindgroup }) in items.enumerate() {
             let title = format!("bloom upsample {}", textures_guard.len() - i - 1);
             let label = Some(title.as_str());
-            let mut encoder =
-                device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label });
             {
                 let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label,
@@ -665,16 +660,14 @@ impl Bloom {
                 let id = self.upsample_filter_radius.id().into();
                 render_pass.draw(0..6, id..id + 1);
             }
-            queue.submit(std::iter::once(encoder.finish()));
         }
     }
 
-    fn render_mix(&self, device: &wgpu::Device, queue: &wgpu::Queue) {
+    fn render_mix(&self, encoder: &mut wgpu::CommandEncoder) {
         let label = Some("bloom mix");
         // UNWRAP: not safe but we want to panic
         let mix_texture = self.mix_texture.read().expect("bloom mix_texture read");
         let mix_bindgroup = self.mix_bindgroup.read().expect("bloom mix_bindgroup read");
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label });
         {
             let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label,
@@ -696,8 +689,6 @@ impl Bloom {
             let id = self.mix_strength.id().into();
             render_pass.draw(0..6, id..id + 1);
         }
-
-        queue.submit(std::iter::once(encoder.finish()));
     }
 
     pub fn bloom(&self, device: &wgpu::Device, queue: &wgpu::Queue) {
@@ -706,9 +697,13 @@ impl Bloom {
             self.slab_buffer.is_valid(),
             "bloom slab buffer should never resize"
         );
-        self.render_downsamples(device, queue);
-        self.render_upsamples(device, queue);
-        self.render_mix(device, queue);
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("bloom"),
+        });
+        self.render_downsamples(&mut encoder);
+        self.render_upsamples(&mut encoder);
+        self.render_mix(&mut encoder);
+        queue.submit(std::iter::once(encoder.finish()));
     }
 }
 

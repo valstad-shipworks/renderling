@@ -243,12 +243,12 @@ pub extern crate glam;
 // Similar to [ndarray](https://docs.rs/ndarray/latest/ndarray/#crate-feature-flags).
 
 #[macro_export]
-/// A wrapper around `std::println` that is a noop on the GPU.
+/// A wrapper around `log::trace` that is a noop on the GPU.
 macro_rules! println {
     ($($arg:tt)*) => {
         #[cfg(cpu)]
         {
-            std::println!($($arg)*);
+            log::trace!($($arg)*);
         }
     }
 }

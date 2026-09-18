@@ -9,7 +9,6 @@ use craballoc::{
 };
 use crabslab::Id;
 use glam::{Mat4, UVec2};
-use snafu::ResultExt;
 
 use crate::{
     atlas::{shader::AtlasTextureDescriptor, AtlasBlittingOperation, AtlasImage, AtlasTexture},
@@ -20,7 +19,7 @@ use crate::{
 
 use super::{
     shader::{LightStyle, ShadowMapDescriptor},
-    AnalyticalLight, Lighting, LightingError, PollSnafu,
+    AnalyticalLight, Lighting, LightingError,
 };
 
 /// Projects shadows from a single light source for specific objects.
@@ -381,10 +380,8 @@ impl ShadowMap {
                 &lighting.shadow_map_atlas,
                 atlas_texture,
             )?;
-            let submission = queue.submit(Some(encoder.finish()));
-            device
-                .poll(wgpu::PollType::WaitForSubmissionIndex(submission))
-                .context(PollSnafu)?;
+            // One submission per face: its index is a slab write ordered against submits.
+            queue.submit(Some(encoder.finish()));
         }
         Ok(())
     }

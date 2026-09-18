@@ -1502,8 +1502,9 @@ impl Stage {
             Some("stage-depth"),
         );
         self.bloom.set_hdr_texture(self.runtime(), &hdr_texture);
+        // Tonemapping reads the bloom mix texture, bloom or not.
         self.tonemapping
-            .set_hdr_texture(self.device(), &hdr_texture);
+            .set_hdr_texture(self.device(), &self.bloom.get_mix_texture());
         *self.hdr_texture.write().expect("hdr_texture write") = hdr_texture;
 
         let _ = self
