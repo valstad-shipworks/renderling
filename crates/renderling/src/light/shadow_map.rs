@@ -13,6 +13,7 @@ use glam::{Mat4, UVec2};
 use crate::{
     atlas::{shader::AtlasTextureDescriptor, AtlasBlittingOperation, AtlasImage, AtlasTexture},
     bindgroup::ManagedBindGroup,
+    bvol::{BVol, BoundingSphere, Frustum},
     light::{IsLight, Light},
     primitive::Primitive,
 };
@@ -83,9 +84,51 @@ impl ShadowMap {
         })
     }
 
+    /// Whether shadow map passes clamp depth instead of clipping at the near
+    /// and far planes, so casters closer to the light than `z_near` still
+    /// occlude.
+    pub fn clamps_depth(device: &wgpu::Device) -> bool {
+        device
+            .features()
+            .contains(wgpu::Features::DEPTH_CLIP_CONTROL)
+    }
+
+    /// World space bounds of a caster, or `None` when its bounds are unset or
+    /// can't be trusted (skinned or morphed geometry).
+    fn caster_bounds(primitive: &Primitive) -> Option<BoundingSphere> {
+        let desc = primitive.descriptor();
+        if desc.bounds.radius <= 0.0 || desc.skin_id.is_some() || !desc.morph_targets.is_empty() {
+            return None;
+        }
+        let Some(transform) = primitive.transform().as_ref().map(|t| t.descriptor()) else {
+            return Some(desc.bounds);
+        };
+        Some(BoundingSphere::new(
+            Mat4::from(transform).transform_point3(desc.bounds.center),
+            desc.bounds.radius * transform.scale.abs().max_element(),
+        ))
+    }
+
+    /// Whether a caster can't reach the shadow map face whose frustum is
+    /// given. The near plane doesn't cull when depth is clamped.
+    fn culls_caster(frustum: &Frustum, depth_clamped: bool, bounds: &BoundingSphere) -> bool {
+        let planes = if depth_clamped {
+            &frustum.planes[1..]
+        } else {
+            &frustum.planes[..]
+        };
+        planes.iter().any(|plane| bounds.culls_this_plane(plane))
+    }
+
+    /// Create the shadow map update pipeline.
+    ///
+    /// It culls front faces, storing the depth of the far side of closed
+    /// casters, which keeps lit surfaces from shadowing themselves.
+    /// `front_face` must match the winding the light's projection produces.
     pub fn create_update_pipeline(
         device: &wgpu::Device,
         bindgroup_layout: &wgpu::BindGroupLayout,
+        front_face: wgpu::FrontFace,
     ) -> wgpu::RenderPipeline {
         let shadow_map_update_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -106,9 +149,9 @@ impl ShadowMap {
             primitive: wgpu::PrimitiveState {
                 topology: wgpu::PrimitiveTopology::TriangleList,
                 strip_index_format: None,
-                front_face: wgpu::FrontFace::Ccw,
+                front_face,
                 cull_mode: Some(wgpu::Face::Front),
-                unclipped_depth: false,
+                unclipped_depth: Self::clamps_depth(device),
                 polygon_mode: wgpu::PolygonMode::Fill,
                 conservative: false,
             },
@@ -269,22 +312,65 @@ impl ShadowMap {
         lighting: impl AsRef<Lighting>,
         renderlets: impl IntoIterator<Item = &'a Primitive>,
     ) -> Result<(), LightingError> {
+        self.update_faces(lighting, renderlets, 0..self.face_count())
+    }
+
+    /// The number of faces in this shadow map: 6 for a point light's cube, 1
+    /// for directional and spot lights.
+    pub fn face_count(&self) -> usize {
+        self.atlas_textures.len()
+    }
+
+    /// Render only the given faces of this shadow map, so the cost of
+    /// refreshing a point light's cube can be spread over several frames.
+    ///
+    /// Each face keeps the light transform it was last rendered with, so a
+    /// face that has not been refreshed since the light moved still lines up
+    /// with its own depth map. Faces out of range are ignored.
+    ///
+    /// ## Errors
+    /// If the `AnalyticalLight` used to create this `ShadowMap` has been
+    /// dropped, calling this function will err.
+    pub fn update_faces<'a>(
+        &self,
+        lighting: impl AsRef<Lighting>,
+        renderlets: impl IntoIterator<Item = &'a Primitive>,
+        faces: impl IntoIterator<Item = usize>,
+    ) -> Result<(), LightingError> {
         let lighting = lighting.as_ref();
+        let faces = faces
+            .into_iter()
+            .filter(|&face| face < self.face_count())
+            .collect::<Vec<_>>();
         let shadow_desc = self.shadowmap_descriptor.get();
         let new_transforms = self.light_bundle.light_space_transforms(
             &self.light_bundle.transform().descriptor(),
             shadow_desc.z_near,
             shadow_desc.z_far,
         );
-        for (i, t) in (0..self.light_space_transforms.len()).zip(new_transforms) {
-            self.light_space_transforms.set_item(i, t);
+        for &face in &faces {
+            if let Some(t) = new_transforms.get(face) {
+                self.light_space_transforms.set_item(face, *t);
+            }
         }
         if lighting.geometry_slab.has_queued_updates() {
             lighting.geometry_slab.commit();
         }
-        let renderlets = renderlets.into_iter().collect::<Vec<_>>();
+        let renderlets = renderlets
+            .into_iter()
+            .map(|rlet| {
+                let desc = rlet.descriptor();
+                (
+                    rlet.id(),
+                    desc.get_vertex_count(),
+                    Self::caster_bounds(rlet),
+                )
+            })
+            .collect::<Vec<_>>();
 
         let device = lighting.light_slab.device();
+        let depth_clamped = Self::clamps_depth(device);
+        let is_point_light = self.light_bundle.style() == LightStyle::Point;
         let queue = lighting.light_slab.queue();
         let mut light_slab_buffer = lighting
             .light_slab_buffer
@@ -319,7 +405,8 @@ impl ShadowMap {
                 )
             })
         };
-        for (i, atlas_texture) in self.atlas_textures.iter().enumerate() {
+        for &i in &faces {
+            let atlas_texture = &self.atlas_textures[i];
             let mut encoder = device
                 .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Self::LABEL });
 
@@ -358,15 +445,26 @@ impl ShadowMap {
                     }),
                     ..Default::default()
                 });
-                render_pass.set_pipeline(&lighting.shadow_map_update_pipeline);
+                render_pass.set_pipeline(
+                    if is_point_light {
+                        &lighting.shadow_map_update_pipeline_mirrored
+                    } else {
+                        &lighting.shadow_map_update_pipeline
+                    },
+                );
                 render_pass.set_bind_group(0, Some(bindgroup.as_ref()), &[]);
+                let frustum = new_transforms
+                    .get(i)
+                    .map(|t| Frustum::from_view_projection(*t));
                 let mut count = 0;
-                for rlet in renderlets.iter() {
-                    let id = rlet.id();
-                    let rlet = rlet.descriptor();
-                    let vertex_range = 0..rlet.get_vertex_count();
+                for (id, vertex_count, bounds) in renderlets.iter() {
+                    if let (Some(frustum), Some(bounds)) = (&frustum, bounds) {
+                        if Self::culls_caster(frustum, depth_clamped, bounds) {
+                            continue;
+                        }
+                    }
                     let instance_range = id.inner()..id.inner() + 1;
-                    render_pass.draw(vertex_range, instance_range);
+                    render_pass.draw(0..*vertex_count, instance_range);
                     count += 1;
                 }
                 log::trace!("rendered {count} renderlets to the shadow map");
@@ -393,6 +491,31 @@ mod test {
     use glam::{UVec2, Vec3};
 
     use crate::{context::Context, test::BlockOnFuture};
+
+    #[test]
+    fn caster_culling_keeps_casters_inside_the_near_plane_when_depth_is_clamped() {
+        use super::ShadowMap;
+        use crate::bvol::{BoundingSphere, Frustum};
+        use glam::Mat4;
+
+        let projection = Mat4::perspective_rh(90f32.to_radians(), 1.0, 0.05, 10.0);
+        let view = Mat4::look_to_rh(Vec3::ZERO, Vec3::NEG_Z, Vec3::Y);
+        let frustum = Frustum::from_view_projection(projection * view);
+        let culls = |center: Vec3, radius: f32, clamped: bool| {
+            ShadowMap::culls_caster(&frustum, clamped, &BoundingSphere::new(center, radius))
+        };
+
+        assert!(!culls(Vec3::new(0.0, 0.0, -5.0), 0.1, false));
+        assert!(!culls(Vec3::new(4.0, 0.0, -5.0), 0.1, false));
+        assert!(culls(Vec3::new(6.0, 0.0, -5.0), 0.1, false));
+        assert!(culls(Vec3::new(0.0, 0.0, 5.0), 0.1, false));
+        assert!(culls(Vec3::new(0.0, 0.0, -11.0), 0.1, false));
+
+        let at_the_light = Vec3::new(0.0, 0.0, -0.01);
+        assert!(culls(at_the_light, 0.005, false));
+        assert!(!culls(at_the_light, 0.005, true));
+        assert!(culls(Vec3::new(0.0, 0.0, -11.0), 0.1, true));
+    }
 
     #[test]
     fn shadow_mapping_just_cuboid() {

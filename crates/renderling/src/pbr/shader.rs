@@ -33,7 +33,8 @@ pub fn normal_distribution_ggx(n: Vec3, h: Vec3, roughness: f32) -> f32 {
     let num = a2;
     let denom = (ndot_h2 * (a2 - 1.0) + 1.0).powf(2.0) * core::f32::consts::PI;
 
-    num / denom
+    // A perfectly smooth surface (a2 = 0) makes this 0 / 0 where n = h.
+    num / denom.max(f32::MIN_POSITIVE)
 }
 
 fn geometry_schlick_ggx(ndot_v: f32, roughness: f32) -> f32 {
@@ -100,7 +101,7 @@ pub fn outgoing_radiance(
     my_println!("    metalness: {metalness:?}");
     my_println!("    roughness: {roughness:?}");
 
-    let f0 = Vec3::splat(0.4).lerp(albedo, metalness);
+    let f0 = Vec3::splat(0.04).lerp(albedo, metalness);
     my_println!("    f0: {f0:?}");
     let radiance = light_color.xyz() * attenuation;
     my_println!("    radiance: {radiance:?}");
@@ -554,6 +555,9 @@ where
                     continue;
                 }
                 let l = frag_to_light.alt_norm_or_zero();
+                if n.dot(l) <= 0.0 {
+                    continue;
+                }
                 let attenuation = intensity / (distance * distance);
                 let radiance =
                     outgoing_radiance(color, albedo, attenuation, v, l, n, metallic, roughness);
@@ -578,16 +582,19 @@ where
                 let calculation =
                     SpotLightCalculation::new(spot_light_descriptor, transform, in_pos);
                 crate::println!("calculation: {calculation:#?}");
-                if calculation.frag_to_light_distance == 0.0 {
+                if calculation.frag_to_light_distance == 0.0
+                    || calculation.contribution <= 0.0
+                    || n.dot(calculation.frag_to_light) <= 0.0
+                {
                     continue;
                 }
-                // Convert from candelas to a radiometric unit.
-                //
-                // TODO: verify that spot light radiometric conversion is correct.
-                let intensity =
+                // Candelas are already per steradian, so like a point light's
+                // they convert with the luminous efficacy alone and fall off
+                // with the square of the distance.
                 // TODO: write true radiometric light conversions for Lux and Candela
-                    spot_light_descriptor.intensity.0 / (683.0 * 4.0 * core::f32::consts::PI);
-                let attenuation: f32 = intensity * calculation.contribution;
+                let intensity = spot_light_descriptor.intensity.0 / 683.0;
+                let distance = calculation.frag_to_light_distance;
+                let attenuation: f32 = intensity * calculation.contribution / (distance * distance);
                 let radiance = outgoing_radiance(
                     spot_light_descriptor.color,
                     albedo,
@@ -617,6 +624,9 @@ where
                 } = light_slab.read(light.into_directional_id());
                 let direction = transform.transform_vector3(direction);
                 let l = -direction.alt_norm_or_zero();
+                if n.dot(l) <= 0.0 {
+                    continue;
+                }
                 // TODO: write true radiometric light conversions for Lux and Candela
                 let attenuation = intensity_lux.0 / 683.0;
                 let radiance =

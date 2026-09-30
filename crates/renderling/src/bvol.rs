@@ -227,7 +227,12 @@ pub struct Frustum {
 impl Frustum {
     /// Compute a frustum in world space from the given [`CameraDescriptor`].
     pub fn from_camera(camera: &CameraDescriptor) -> Self {
-        let viewprojection = camera.view_projection();
+        Self::from_view_projection(camera.view_projection())
+    }
+
+    /// Compute a frustum in world space from a view projection matrix with
+    /// wgpu's `[0, 1]` NDC depth range.
+    pub fn from_view_projection(viewprojection: Mat4) -> Self {
         let mvp = viewprojection.to_cols_array_2d();
 
         let left = normalize_plane(Vec4::new(

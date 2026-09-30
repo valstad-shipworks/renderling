@@ -718,6 +718,9 @@ pub struct Lighting {
     pub(crate) analytical_lights: Arc<RwLock<Vec<AnalyticalLight>>>,
     pub(crate) analytical_lights_array: Arc<RwLock<Option<HybridArray<Id<LightDescriptor>>>>>,
     pub(crate) shadow_map_update_pipeline: Arc<wgpu::RenderPipeline>,
+    /// Point light cube faces are rendered with left handed views, which
+    /// mirror the image and reverse triangle winding.
+    pub(crate) shadow_map_update_pipeline_mirrored: Arc<wgpu::RenderPipeline>,
     pub(crate) shadow_map_update_bindgroup_layout: Arc<wgpu::BindGroupLayout>,
     pub(crate) shadow_map_update_blitter: AtlasBlitter,
     pub(crate) shadow_map_atlas: Atlas,
@@ -788,9 +791,18 @@ impl Lighting {
         let light_slab_buffer = light_slab.commit();
         let shadow_map_update_bindgroup_layout: Arc<_> =
             ShadowMap::create_update_bindgroup_layout(&runtime.device).into();
-        let shadow_map_update_pipeline =
-            ShadowMap::create_update_pipeline(&runtime.device, &shadow_map_update_bindgroup_layout)
-                .into();
+        let shadow_map_update_pipeline = ShadowMap::create_update_pipeline(
+            &runtime.device,
+            &shadow_map_update_bindgroup_layout,
+            wgpu::FrontFace::Ccw,
+        )
+        .into();
+        let shadow_map_update_pipeline_mirrored = ShadowMap::create_update_pipeline(
+            &runtime.device,
+            &shadow_map_update_bindgroup_layout,
+            wgpu::FrontFace::Cw,
+        )
+        .into();
         Self {
             shadow_map_atlas: Self::create_shadow_map_atlas(&light_slab, atlas_size),
             analytical_lights: Default::default(),
@@ -801,6 +813,7 @@ impl Lighting {
             lighting_descriptor,
             geometry_slab_buffer: Arc::new(RwLock::new(geometry.slab_allocator().commit())),
             shadow_map_update_pipeline,
+            shadow_map_update_pipeline_mirrored,
             shadow_map_update_bindgroup_layout,
             shadow_map_update_blitter: AtlasBlitter::new(
                 &runtime.device,

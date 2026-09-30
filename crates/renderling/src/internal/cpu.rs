@@ -52,7 +52,10 @@ pub async fn device(
         // this one is a funny requirement, it seems it is needed if using storage buffers in
         // vertex shaders, even if those shaders are read-only
         | wgpu::Features::VERTEX_WRITABLE_STORAGE
-        | wgpu::Features::CLEAR_TEXTURE;
+        | wgpu::Features::CLEAR_TEXTURE
+        // shadow maps clamp casters between a light and its near plane
+        // instead of clipping them away
+        | wgpu::Features::DEPTH_CLIP_CONTROL;
     let supported_features = adapter.features();
     let required_features = wanted_features.intersection(supported_features);
     let unsupported_features = wanted_features.difference(supported_features);
