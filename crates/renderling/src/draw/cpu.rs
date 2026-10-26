@@ -268,6 +268,35 @@ impl DrawCalls {
         }
     }
 
+    /// Draw the opaque or the translucent primitives directly, in order:
+    /// those with indices or those without. An indexed draw expects the
+    /// geometry slab as the render pass's index buffer.
+    pub(crate) fn draw_direct_where(
+        &self,
+        render_pass: &mut wgpu::RenderPass,
+        translucent: bool,
+        indexed: bool,
+    ) {
+        for ir in self
+            .renderlets
+            .iter()
+            .filter(|ir| ir.is_translucent() == translucent)
+        {
+            let desc = ir.descriptor.get();
+            let id = ir.descriptor.id();
+            let instances = id.inner()..id.inner() + 1;
+            match (indexed, desc.indices_array.is_null()) {
+                (true, false) => {
+                    let start = desc.indices_array.starting_index() as u32;
+                    let end = start + desc.indices_array.len() as u32;
+                    render_pass.draw_indexed(start..end, 0, instances);
+                }
+                (false, true) => render_pass.draw(0..desc.get_vertex_count(), instances),
+                _ => {}
+            }
+        }
+    }
+
     /// Draw into the given `RenderPass`.
     ///
     /// This method draws using the indirect draw buffer, if possible, otherwise

@@ -133,6 +133,7 @@ impl SceneCubemap {
             };
             let (_, _) = StageRendering {
                 pipeline: &self.pipeline,
+                direct: None,
                 stage,
                 color_attachment,
                 depth_stencil_attachment,

@@ -446,7 +446,10 @@ impl DirectionalLightDescriptor {
         let direction = parent_light_transform
             .transform_vector3(self.direction)
             .alt_norm_or_zero();
-        let position = -direction * depth * 0.5;
+        // The map's box is centred on the light's translation, so a light
+        // placed over the scene spends its texels on the scene.
+        let center = parent_light_transform.transform_point3(Vec3::ZERO);
+        let position = center - direction * depth * 0.5;
         crate::println!("direction: {direction}");
         crate::println!("position: {position}");
         let up = direction.orthonormal_vectors()[0];
@@ -792,34 +795,36 @@ impl ShadowCalculation {
         // the transformed NDC coordinates from the `ShadowMap::update` render pass.
         // This gives us the closest depth from the light's point of view:
         let pcf_samples_2 = *pcf_samples as i32 / 2;
-        let texel_size = 1.0
+        let tex = shadow_map_atlas_texture;
+        let size = Vec2::new(tex.size_px.x as f32, tex.size_px.y as f32);
+        let texel_size = 1.0 / size;
+        // Texel centres, so that the nearest-filtered sample is the texel
+        // `AtlasTextureDescriptor::uv` names without rounding at its edges.
+        let corner = Vec2::new(tex.offset_px.x as f32, tex.offset_px.y as f32) + 0.5;
+        let inv_atlas_size = 1.0
             / Vec2::new(
-                shadow_map_atlas_texture.size_px.x as f32,
-                shadow_map_atlas_texture.size_px.y as f32,
+                shadow_map_atlas_size.x as f32,
+                shadow_map_atlas_size.y as f32,
             );
+        let layer = tex.layer_index as f32;
+        // To get the current depth at this fragment we simply retrieve the projected
+        // vector's z coordinate which equals the depth of this fragment
+        // from the light's perspective.
+        let fragment_depth = frag_pos_in_light_space.z;
+        crate::println!("current_depth: {fragment_depth}");
+        let bias = (bias_max * (1.0 - surface_normal.dot(*light_direction))).max(*bias_min);
         let mut shadow = 0.0f32;
         let mut total = 0.0f32;
         for x in -pcf_samples_2..=pcf_samples_2 {
+            let s = tex.modes.s.wrap(proj_coords_uv.x + x as f32 * texel_size.x);
+            let s = (((s * size.x) as u32) as f32 + corner.x) * inv_atlas_size.x;
             for y in -pcf_samples_2..=pcf_samples_2 {
-                let proj_coords = shadow_map_atlas_texture.uv(
-                    proj_coords_uv + Vec2::new(x as f32, y as f32) * texel_size,
-                    *shadow_map_atlas_size,
-                );
+                let t = tex.modes.t.wrap(proj_coords_uv.y + y as f32 * texel_size.y);
+                let t = (((t * size.y) as u32) as f32 + corner.y) * inv_atlas_size.y;
                 let shadow_map_depth = shadow_map
-                    .sample_by_lod(*shadow_map_sampler, proj_coords, 0.0)
+                    .sample_by_lod(*shadow_map_sampler, Vec3::new(s, t, layer), 0.0)
                     .x;
-                // To get the current depth at this fragment we simply retrieve the projected
-                // vector's z coordinate which equals the depth of this fragment
-                // from the light's perspective.
-                let fragment_depth = frag_pos_in_light_space.z;
-
-                // If the `current_depth`, which is the depth of the fragment from the lights
-                // POV, is greater than the `closest_depth` of the shadow map at
-                // that fragment, the fragment is in shadow
-                crate::println!("current_depth: {fragment_depth}");
                 crate::println!("closest_depth: {shadow_map_depth}");
-                let bias = (bias_max * (1.0 - surface_normal.dot(*light_direction))).max(*bias_min);
-
                 if self.is_occluded(fragment_depth, shadow_map_depth, bias, is_perspective) {
                     shadow += 1.0
                 }

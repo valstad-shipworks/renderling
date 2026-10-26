@@ -176,6 +176,84 @@ pub fn primitive_vertex(
     #[cfg(test)] out_info: &mut PrimitivePbrVertexInfo,
 ) {
     let primitive = geometry_slab.read_unchecked(primitive_id);
+    primitive_vertex_with(
+        primitive,
+        primitive_id,
+        vertex_index,
+        geometry_slab,
+        out_primitive,
+        out_color,
+        out_uv0,
+        out_uv1,
+        out_norm,
+        out_tangent,
+        out_bitangent,
+        out_world_pos,
+        out_clip_pos,
+        #[cfg(test)]
+        out_info,
+    );
+}
+
+/// primitive vertex shader for an indexed draw, whose index buffer is the
+/// primitive's indices: `vertex_index` is then already the vertex's place in
+/// the primitive's vertices, and the GPU reuses vertices shared between
+/// triangles.
+#[spirv(vertex)]
+#[allow(clippy::too_many_arguments)]
+pub fn primitive_vertex_indexed(
+    #[spirv(instance_index)] primitive_id: Id<PrimitiveDescriptor>,
+    #[spirv(vertex_index)] vertex_index: u32,
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 0)] geometry_slab: &[u32],
+    #[spirv(flat)] out_primitive: &mut Id<PrimitiveDescriptor>,
+    out_color: &mut Vec4,
+    out_uv0: &mut Vec2,
+    out_uv1: &mut Vec2,
+    out_norm: &mut Vec3,
+    out_tangent: &mut Vec3,
+    out_bitangent: &mut Vec3,
+    out_world_pos: &mut Vec3,
+    #[spirv(position)] out_clip_pos: &mut Vec4,
+    #[cfg(test)] out_info: &mut PrimitivePbrVertexInfo,
+) {
+    let mut primitive = geometry_slab.read_unchecked(primitive_id);
+    primitive.indices_array = Array::default();
+    primitive_vertex_with(
+        primitive,
+        primitive_id,
+        vertex_index,
+        geometry_slab,
+        out_primitive,
+        out_color,
+        out_uv0,
+        out_uv1,
+        out_norm,
+        out_tangent,
+        out_bitangent,
+        out_world_pos,
+        out_clip_pos,
+        #[cfg(test)]
+        out_info,
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn primitive_vertex_with(
+    primitive: PrimitiveDescriptor,
+    primitive_id: Id<PrimitiveDescriptor>,
+    vertex_index: u32,
+    geometry_slab: &[u32],
+    out_primitive: &mut Id<PrimitiveDescriptor>,
+    out_color: &mut Vec4,
+    out_uv0: &mut Vec2,
+    out_uv1: &mut Vec2,
+    out_norm: &mut Vec3,
+    out_tangent: &mut Vec3,
+    out_bitangent: &mut Vec3,
+    out_world_pos: &mut Vec3,
+    out_clip_pos: &mut Vec4,
+    #[cfg(test)] out_info: &mut PrimitivePbrVertexInfo,
+) {
     if !primitive.visible {
         // put it outside the clipping frustum
         *out_clip_pos = Vec4::new(10.0, 10.0, 10.0, 1.0);

@@ -253,6 +253,16 @@ impl Primitive {
         *self.material.lock().expect("material lock") = None;
         self
     }
+
+    /// Whether this primitive's material blends; see
+    /// [`Material::set_translucent`].
+    pub(crate) fn is_translucent(&self) -> bool {
+        self.material
+            .lock()
+            .expect("material lock")
+            .as_ref()
+            .is_some_and(Material::is_translucent)
+    }
 }
 
 // Skin impls

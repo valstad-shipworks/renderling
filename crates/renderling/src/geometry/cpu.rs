@@ -333,7 +333,7 @@ impl AsRef<SlabAllocator<WgpuRuntime>> for Geometry {
 impl Geometry {
     pub fn new(runtime: impl AsRef<WgpuRuntime>, resolution: UVec2, atlas_size: UVec2) -> Self {
         let runtime = runtime.as_ref();
-        let slab = SlabAllocator::new(runtime, "geometry", wgpu::BufferUsages::empty());
+        let slab = SlabAllocator::new(runtime, "geometry", wgpu::BufferUsages::INDEX);
         let descriptor = slab.new_value(GeometryDescriptor {
             atlas_size,
             resolution,
