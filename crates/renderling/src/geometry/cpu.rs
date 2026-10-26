@@ -389,6 +389,15 @@ impl Geometry {
         c
     }
 
+    /// The view matrix of the camera in use, or identity without one.
+    pub(crate) fn used_camera_view(&self) -> Mat4 {
+        self.camera
+            .lock()
+            .expect("geometry camera lock")
+            .as_ref()
+            .map_or(Mat4::IDENTITY, Camera::view)
+    }
+
     /// Set all geometry to use the given camera.
     pub fn use_camera(&self, camera: &Camera) {
         let id = camera.id();

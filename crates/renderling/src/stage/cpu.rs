@@ -307,6 +307,17 @@ impl StageRendering<'_> {
                 ..Default::default()
             });
 
+            let draw_skybox = |render_pass: &mut wgpu::RenderPass| {
+                if self.stage.has_skybox.load(Ordering::Relaxed) {
+                    let (pipeline, bindgroup) = self
+                        .stage
+                        .get_skybox_pipeline_and_bindgroup(&commit_result.geometry_buffer);
+                    render_pass.set_pipeline(&pipeline.pipeline);
+                    render_pass.set_bind_group(0, Some(bindgroup.as_ref()), &[]);
+                    let camera_id = self.stage.geometry.descriptor().get().camera_id.inner();
+                    render_pass.draw(0..36, camera_id..camera_id + 1);
+                }
+            };
             match self
                 .direct
                 .filter(|_| !draw_calls.get_compute_culling_available())
@@ -315,37 +326,41 @@ impl StageRendering<'_> {
                     render_pass.set_pipeline(self.pipeline);
                     render_pass.set_bind_group(0, Some(primitive_bind_group.as_ref()), &[]);
                     draw_calls.draw(&mut render_pass);
+                    draw_skybox(&mut render_pass);
                 }
                 Some(direct) => {
                     // Opaque primitives first and unblended, so the GPU can
-                    // drop hidden fragments; then the translucent ones over
-                    // them. Indexed draws let it reuse shared vertices.
+                    // drop hidden fragments; then the sky behind them; then
+                    // the translucent ones over both, farthest first. Indexed
+                    // draws let it reuse shared vertices.
                     render_pass.set_index_buffer(
                         commit_result.geometry_buffer.slice(..),
                         wgpu::IndexFormat::Uint32,
                     );
-                    for (pipeline, translucent, indexed) in [
-                        (&direct.opaque, false, false),
-                        (&direct.opaque_indexed, false, true),
-                        (self.pipeline, true, false),
-                        (&direct.translucent_indexed, true, true),
-                    ] {
+                    for (pipeline, indexed) in
+                        [(&direct.opaque, false), (&direct.opaque_indexed, true)]
+                    {
                         render_pass.set_pipeline(pipeline);
                         render_pass.set_bind_group(0, Some(primitive_bind_group.as_ref()), &[]);
-                        draw_calls.draw_direct_where(&mut render_pass, translucent, indexed);
+                        draw_calls.draw_opaque(&mut render_pass, indexed);
+                    }
+                    draw_skybox(&mut render_pass);
+                    let view = self.stage.geometry.used_camera_view();
+                    let mut bound = None;
+                    for ir in draw_calls.translucent_back_to_front(view) {
+                        let indexed = DrawCalls::is_indexed(ir);
+                        if bound != Some(indexed) {
+                            render_pass.set_pipeline(if indexed {
+                                &direct.translucent_indexed
+                            } else {
+                                self.pipeline
+                            });
+                            render_pass.set_bind_group(0, Some(primitive_bind_group.as_ref()), &[]);
+                            bound = Some(indexed);
+                        }
+                        DrawCalls::draw_primitive(&mut render_pass, ir);
                     }
                 }
-            }
-
-            let has_skybox = self.stage.has_skybox.load(Ordering::Relaxed);
-            if has_skybox {
-                let (pipeline, bindgroup) = self
-                    .stage
-                    .get_skybox_pipeline_and_bindgroup(&commit_result.geometry_buffer);
-                render_pass.set_pipeline(&pipeline.pipeline);
-                render_pass.set_bind_group(0, Some(bindgroup.as_ref()), &[]);
-                let camera_id = self.stage.geometry.descriptor().get().camera_id.inner();
-                render_pass.draw(0..36, camera_id..camera_id + 1);
             }
         }
         let sindex = self.stage.queue().submit(std::iter::once(encoder.finish()));
