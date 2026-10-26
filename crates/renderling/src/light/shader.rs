@@ -717,27 +717,59 @@ impl ShadowCalculation {
         near * far / (far - ndc_depth * (far - near))
     }
 
-    /// Whether a fragment at `fragment_depth` lies behind the occluder stored
-    /// at `occluder_depth`, both NDC depths.
+    /// The depth a shadow map's texel must reach for a fragment at
+    /// `fragment_depth`, an NDC depth, to be lit.
     ///
     /// Orthographic depth is linear, so `bias` is subtracted as is. Perspective
     /// depth crowds towards 1.0 with distance, and a constant bias in it grows
-    /// with the square of the distance in world units, so there the depths are
-    /// linearized and `bias` is a fraction of the fragment's distance, which
-    /// tracks the shadow map texel footprint.
-    fn is_occluded(
-        &self,
-        fragment_depth: f32,
-        occluder_depth: f32,
-        bias: f32,
-        is_perspective: bool,
-    ) -> bool {
+    /// with the square of the distance in world units, so there `bias` is a
+    /// fraction of the fragment's distance, which tracks the shadow map texel
+    /// footprint, taken back to NDC.
+    fn reference_depth(&self, fragment_depth: f32, bias: f32, is_perspective: bool) -> f32 {
         if is_perspective {
-            let fragment = self.perspective_depth_to_distance(fragment_depth);
-            fragment * (1.0 - bias) > self.perspective_depth_to_distance(occluder_depth)
+            let near = self.shadow_map_desc.z_near;
+            let far = self.shadow_map_desc.z_far;
+            let distance =
+                (self.perspective_depth_to_distance(fragment_depth) * (1.0 - bias)).max(near);
+            (far - near * far / distance) / (far - near)
         } else {
-            fragment_depth - bias >= occluder_depth
+            fragment_depth - bias
         }
+    }
+
+    /// The lit fraction around `texel`, texel coordinates within `tex`, as
+    /// `taps` per side of the sampler's 2x2 comparisons a texel apart. Taps
+    /// stay half a texel inside the texture, so none reads a neighbour in the
+    /// atlas.
+    #[allow(clippy::too_many_arguments)]
+    fn filtered<T, S>(
+        shadow_map: &T,
+        shadow_map_sampler: &S,
+        tex: &AtlasTextureDescriptor,
+        atlas_size: UVec2,
+        texel: Vec2,
+        taps: i32,
+        reference: f32,
+    ) -> f32
+    where
+        S: IsSampler,
+        T: Sample2dArray<Sampler = S>,
+    {
+        let size = Vec2::new(tex.size_px.x as f32, tex.size_px.y as f32);
+        let offset = Vec2::new(tex.offset_px.x as f32, tex.offset_px.y as f32);
+        let inv_atlas_size = 1.0 / Vec2::new(atlas_size.x as f32, atlas_size.y as f32);
+        let layer = tex.layer_index as f32;
+        let start = -0.5 * (taps - 1) as f32;
+        let mut lit = 0.0f32;
+        for x in 0..taps {
+            for y in 0..taps {
+                let at = (texel + Vec2::new(start + x as f32, start + y as f32))
+                    .clamp(Vec2::splat(0.5), size - 0.5);
+                let uv = ((at + offset) * inv_atlas_size).extend(layer);
+                lit += shadow_map.sample_compare(*shadow_map_sampler, uv, reference);
+            }
+        }
+        lit / (taps * taps) as f32
     }
 
     /// Returns shadow _intensity_ for directional and spot lights.
@@ -794,44 +826,25 @@ impl ShadowCalculation {
         // resulting [0,1] coordinates from proj_coords directly correspond to
         // the transformed NDC coordinates from the `ShadowMap::update` render pass.
         // This gives us the closest depth from the light's point of view:
-        let pcf_samples_2 = *pcf_samples as i32 / 2;
+        // `pcf_samples` n gives n / 2 + 1 comparison taps a side, each a 2x2
+        // bilinear comparison: about the footprint of the old n-texel box,
+        // weighted to fall off smoothly at its edge.
+        let taps = *pcf_samples as i32 / 2 + 1;
         let tex = shadow_map_atlas_texture;
         let size = Vec2::new(tex.size_px.x as f32, tex.size_px.y as f32);
-        let texel_size = 1.0 / size;
-        // Texel centres, so that the nearest-filtered sample is the texel
-        // `AtlasTextureDescriptor::uv` names without rounding at its edges.
-        let corner = Vec2::new(tex.offset_px.x as f32, tex.offset_px.y as f32) + 0.5;
-        let inv_atlas_size = 1.0
-            / Vec2::new(
-                shadow_map_atlas_size.x as f32,
-                shadow_map_atlas_size.y as f32,
-            );
-        let layer = tex.layer_index as f32;
-        // To get the current depth at this fragment we simply retrieve the projected
-        // vector's z coordinate which equals the depth of this fragment
-        // from the light's perspective.
         let fragment_depth = frag_pos_in_light_space.z;
         crate::println!("current_depth: {fragment_depth}");
         let bias = (bias_max * (1.0 - surface_normal.dot(*light_direction))).max(*bias_min);
-        let mut shadow = 0.0f32;
-        let mut total = 0.0f32;
-        for x in -pcf_samples_2..=pcf_samples_2 {
-            let s = tex.modes.s.wrap(proj_coords_uv.x + x as f32 * texel_size.x);
-            let s = (((s * size.x) as u32) as f32 + corner.x) * inv_atlas_size.x;
-            for y in -pcf_samples_2..=pcf_samples_2 {
-                let t = tex.modes.t.wrap(proj_coords_uv.y + y as f32 * texel_size.y);
-                let t = (((t * size.y) as u32) as f32 + corner.y) * inv_atlas_size.y;
-                let shadow_map_depth = shadow_map
-                    .sample_by_lod(*shadow_map_sampler, Vec3::new(s, t, layer), 0.0)
-                    .x;
-                crate::println!("closest_depth: {shadow_map_depth}");
-                if self.is_occluded(fragment_depth, shadow_map_depth, bias, is_perspective) {
-                    shadow += 1.0
-                }
-                total += 1.0;
-            }
-        }
-        shadow / total.max(1.0)
+        let reference = self.reference_depth(fragment_depth, bias, is_perspective);
+        1.0 - Self::filtered(
+            shadow_map,
+            shadow_map_sampler,
+            &tex,
+            *shadow_map_atlas_size,
+            proj_coords_uv * size,
+            taps,
+            reference,
+        )
     }
 
     pub const POINT_SAMPLE_OFFSET_DIRECTIONS: [Vec3; 21] = [
@@ -901,23 +914,17 @@ impl ShadowCalculation {
         let margin = (pcf_half as f32 + 1.0) * texel_size;
         if uv.cmpgt(margin).all() && uv.cmplt(Vec2::ONE - margin).all() {
             let fragment_depth = self.get_frag_pos_in_light_space(light_slab, face_index).z;
-            let mut shadow = 0.0f32;
-            let mut total = 0.0f32;
-            for x in -pcf_half..=pcf_half {
-                for y in -pcf_half..=pcf_half {
-                    let uv_tex = face_texture.uv(
-                        uv + Vec2::new(x as f32, y as f32) * texel_size,
-                        *shadow_map_atlas_size,
-                    );
-                    let shadow_map_depth =
-                        shadow_map.sample_by_lod(*shadow_map_sampler, uv_tex, 0.0).x;
-                    if self.is_occluded(fragment_depth, shadow_map_depth, bias, true) {
-                        shadow += 1.0;
-                    }
-                    total += 1.0;
-                }
-            }
-            return shadow / total.max(1.0);
+            let size = Vec2::new(face_texture.size_px.x as f32, face_texture.size_px.y as f32);
+            return 1.0
+                - Self::filtered(
+                    shadow_map,
+                    shadow_map_sampler,
+                    &face_texture,
+                    *shadow_map_atlas_size,
+                    uv * size,
+                    pcf_half + 1,
+                    self.reference_depth(fragment_depth, bias, true),
+                );
         }
 
         // Near a seam the kernel spills onto neighbouring faces, so each
@@ -927,7 +934,7 @@ impl ShadowCalculation {
         let view_distance = light_to_frag_dir.length();
         // A cube face spans 2 units of tangent across its width.
         let disk_radius = view_distance * 2.0 * texel_size.x;
-        let mut shadow = 0.0f32;
+        let mut lit = 0.0f32;
         for i in 0..pcf_samples {
             let sample_offset = Self::POINT_SAMPLE_OFFSET_DIRECTIONS[i] * disk_radius;
             crate::println!("sample_offset: {sample_offset}");
@@ -937,15 +944,20 @@ impl ShadowCalculation {
             crate::println!("uv: {uv}");
             let frag_pos_in_light_space = self.get_frag_pos_in_light_space(light_slab, face_index);
             let face_texture = self.get_atlas_texture_at(light_slab, face_index);
-            let uv_tex = face_texture.uv(uv, *shadow_map_atlas_size);
-            let shadow_map_depth = shadow_map.sample_by_lod(*shadow_map_sampler, uv_tex, 0.0).x;
-            let fragment_depth = frag_pos_in_light_space.z;
-            if self.is_occluded(fragment_depth, shadow_map_depth, bias, true) {
-                shadow += 1.0
-            }
+            let size = Vec2::new(face_texture.size_px.x as f32, face_texture.size_px.y as f32);
+            let reference = self.reference_depth(frag_pos_in_light_space.z, bias, true);
+            lit += Self::filtered(
+                shadow_map,
+                shadow_map_sampler,
+                &face_texture,
+                *shadow_map_atlas_size,
+                uv * size,
+                1,
+                reference,
+            );
         }
 
-        shadow / pcf_samples as f32
+        1.0 - lit / pcf_samples as f32
     }
 }
 

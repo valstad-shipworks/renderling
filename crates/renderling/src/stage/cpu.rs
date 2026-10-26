@@ -350,11 +350,13 @@ impl StageRendering<'_> {
                     for ir in draw_calls.translucent_back_to_front(view) {
                         let indexed = DrawCalls::is_indexed(ir);
                         if bound != Some(indexed) {
-                            render_pass.set_pipeline(if indexed {
-                                &direct.translucent_indexed
-                            } else {
-                                self.pipeline
-                            });
+                            render_pass.set_pipeline(
+                                if indexed {
+                                    &direct.translucent_indexed
+                                } else {
+                                    self.pipeline
+                                },
+                            );
                             render_pass.set_bind_group(0, Some(primitive_bind_group.as_ref()), &[]);
                             bound = Some(indexed);
                         }
@@ -478,6 +480,9 @@ pub struct Stage {
     pub(crate) direct_pipelines: Arc<RwLock<DirectPipelines>>,
     pub(crate) primitive_bind_group: ManagedBindGroup,
     pub(crate) primitive_bind_group_created: Arc<AtomicUsize>,
+    /// The shadow atlas texture the primitive bind group holds; adding a
+    /// shadow map replaces it.
+    pub(crate) bound_shadow_atlas: Arc<AtomicUsize>,
 
     pub(crate) skybox_pipeline: Arc<RwLock<Option<Arc<SkyboxRenderPipeline>>>>,
 
@@ -1068,7 +1073,12 @@ impl Stage {
     #[must_use]
     pub fn commit(&self) -> StageCommitResult {
         let (materials_atlas_texture_was_recreated, materials_buffer) = self.materials.commit();
-        if materials_atlas_texture_was_recreated {
+        let shadow_atlas = self.lighting.shadow_map_atlas.get_texture().id();
+        let shadow_atlas_was_recreated = self
+            .bound_shadow_atlas
+            .swap(shadow_atlas, Ordering::Relaxed)
+            != shadow_atlas;
+        if materials_atlas_texture_was_recreated || shadow_atlas_was_recreated {
             self.primitive_bind_group.invalidate();
         }
         let geometry_buffer = self.geometry.commit();
@@ -1332,6 +1342,7 @@ impl Stage {
             direct_pipelines: Arc::new(RwLock::new(direct_pipelines)),
             primitive_bind_group: ManagedBindGroup::default(),
             primitive_bind_group_created: Arc::new(0.into()),
+            bound_shadow_atlas: Arc::new(0.into()),
 
             ibl: Arc::new(RwLock::new(ibl)),
             skybox: Arc::new(RwLock::new(skybox)),

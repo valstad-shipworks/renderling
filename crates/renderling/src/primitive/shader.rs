@@ -331,7 +331,7 @@ pub fn primitive_fragment(
     #[spirv(descriptor_set = 0, binding = 8)] brdf: &Image2d,
     #[spirv(descriptor_set = 0, binding = 9)] brdf_sampler: &Sampler,
     #[spirv(storage_buffer, descriptor_set = 0, binding = 10)] light_slab: &[u32],
-    #[spirv(descriptor_set = 0, binding = 11)] shadow_map: &Image!(2D, type=f32, sampled, arrayed),
+    #[spirv(descriptor_set = 0, binding = 11)] shadow_map: &Image!(2D, type=f32, sampled, arrayed, depth),
     #[spirv(descriptor_set = 0, binding = 12)] shadow_map_sampler: &Sampler,
     #[cfg(feature = "debug-slab")]
     #[spirv(storage_buffer, descriptor_set = 0, binding = 13)]

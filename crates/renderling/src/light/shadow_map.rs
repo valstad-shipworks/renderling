@@ -11,7 +11,7 @@ use crabslab::Id;
 use glam::{Mat4, UVec2};
 
 use crate::{
-    atlas::{shader::AtlasTextureDescriptor, AtlasBlittingOperation, AtlasImage, AtlasTexture},
+    atlas::{shader::AtlasTextureDescriptor, AtlasImage, AtlasTexture},
     bindgroup::ManagedBindGroup,
     bvol::{BVol, BoundingSphere, Frustum},
     light::{IsLight, Light},
@@ -49,7 +49,6 @@ pub struct ShadowMap {
     pub(crate) atlas_textures: Vec<AtlasTexture>,
     pub(crate) _atlas_textures_array: HybridArray<Id<AtlasTextureDescriptor>>,
     pub(crate) update_texture: crate::texture::Texture,
-    pub(crate) blitting_op: AtlasBlittingOperation,
     pub(crate) light_bundle: AnalyticalLight,
 }
 
@@ -249,11 +248,6 @@ impl ShadowMap {
         let atlas_textures_array = lighting
             .light_slab
             .new_array(atlas_textures.iter().map(|t| t.id()));
-        let blitting_op = AtlasBlittingOperation::new(
-            &lighting.shadow_map_update_blitter,
-            atlas,
-            if is_point_light { 6 } else { 1 },
-        );
         let light_space_transforms =
             lighting
                 .light_slab
@@ -292,7 +286,6 @@ impl ShadowMap {
             atlas_textures,
             _atlas_textures_array: atlas_textures_array,
             update_texture,
-            blitting_op,
             light_bundle: analytical_light_bundle.clone().into_generic(),
         })
     }
@@ -469,15 +462,24 @@ impl ShadowMap {
                 }
                 log::trace!("rendered {count} renderlets to the shadow map");
             }
-            // Then copy the depth texture to our shadow map atlas in the lighting struct
-            self.blitting_op.run(
-                lighting.light_slab.runtime(),
-                &mut encoder,
-                &self.update_texture,
-                i as u32,
-                &lighting.shadow_map_atlas,
-                atlas_texture,
-            )?;
+            // Then copy the depth texture into its frame of the shadow map atlas.
+            let frame = atlas_texture.descriptor();
+            let atlas = lighting.shadow_map_atlas.get_texture();
+            lighting
+                .shadow_map_atlas
+                .depth_blitter()
+                .ok_or(crate::atlas::AtlasError::MissingBlitter)?
+                .blit(
+                    device,
+                    &mut encoder,
+                    &self.update_texture.texture,
+                    i as u32,
+                    UVec2::ZERO,
+                    &atlas.texture,
+                    frame.layer_index,
+                    frame.offset_px,
+                    frame.size_px,
+                );
             // One submission per face: its index is a slab write ordered against submits.
             queue.submit(Some(encoder.finish()));
         }
