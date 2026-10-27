@@ -48,6 +48,7 @@ impl Materials {
             normal_mapping_texture: Default::default(),
             ao_texture: Default::default(),
             emissive_texture: Default::default(),
+            translucent: Default::default(),
         };
         Self {
             slab,
@@ -95,6 +96,7 @@ impl Materials {
             normal_mapping_texture: Default::default(),
             ao_texture: Default::default(),
             emissive_texture: Default::default(),
+            translucent: Default::default(),
         }
     }
 }
@@ -124,6 +126,7 @@ pub struct Material {
     normal_mapping_texture: Arc<Mutex<Option<AtlasTexture>>>,
     ao_texture: Arc<Mutex<Option<AtlasTexture>>>,
     emissive_texture: Arc<Mutex<Option<AtlasTexture>>>,
+    translucent: Arc<Mutex<Option<bool>>>,
 }
 
 impl From<&Material> for Material {
@@ -133,6 +136,30 @@ impl From<&Material> for Material {
 }
 
 impl Material {
+    /// Sets whether primitives with this material blend over what lies
+    /// behind them, or `None` to decide from the material: translucent when
+    /// its albedo factor's alpha is below one or it has an albedo texture,
+    /// whose texels may carry alpha.
+    ///
+    /// Opaque primitives draw without blending, which lets the GPU skip
+    /// shading fragments that end up hidden.
+    pub fn set_translucent(&self, translucent: Option<bool>) -> &Self {
+        *self.translucent.lock().expect("translucent lock") = translucent;
+        self
+    }
+
+    /// Whether primitives with this material blend over what lies behind
+    /// them; see [`Material::set_translucent`].
+    pub fn is_translucent(&self) -> bool {
+        self.translucent
+            .lock()
+            .expect("translucent lock")
+            .unwrap_or_else(|| {
+                let descriptor = self.descriptor.get();
+                descriptor.albedo_factor.w < 1.0 || !descriptor.albedo_texture_id.is_none()
+            })
+    }
+
     /// Returns the unique identifier of the material descriptor.
     pub fn id(&self) -> Id<MaterialDescriptor> {
         self.descriptor.id()

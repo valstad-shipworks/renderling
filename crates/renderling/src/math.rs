@@ -71,6 +71,17 @@ pub trait Sample2dArray {
     type Sampler: IsSampler;
 
     fn sample_by_lod(&self, sampler: Self::Sampler, uv: glam::Vec3, lod: f32) -> glam::Vec4;
+
+    /// How much of the image around `uv` lies at or beyond `reference`, from 0
+    /// to 1, as a shadow map's comparison sampler filters it: the lit
+    /// fraction of a fragment `reference` deep.
+    fn sample_compare(&self, sampler: Self::Sampler, uv: glam::Vec3, reference: f32) -> f32 {
+        if reference <= self.sample_by_lod(sampler, uv, 0.0).x {
+            1.0
+        } else {
+            0.0
+        }
+    }
 }
 
 impl Sample2dArray for Image2dArray {
@@ -86,6 +97,10 @@ impl Sample2dArray for Image!(2D, type=f32, sampled, arrayed, depth) {
 
     fn sample_by_lod(&self, sampler: Self::Sampler, uv: glam::Vec3, lod: f32) -> glam::Vec4 {
         self.sample_by_lod(sampler, uv, lod)
+    }
+
+    fn sample_compare(&self, sampler: Self::Sampler, uv: glam::Vec3, reference: f32) -> f32 {
+        self.sample_depth_reference_by_lod(sampler, uv, reference, 0.0)
     }
 }
 

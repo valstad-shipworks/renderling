@@ -232,6 +232,7 @@ pub(crate) struct StageRendering<'a> {
     // TODO: include the rest of the needed paramaters from `stage`, and then remove `stage`
     pub stage: &'a Stage,
     pub pipeline: &'a wgpu::RenderPipeline,
+    pub direct: Option<&'a DirectPipelines>,
     pub color_attachment: wgpu::RenderPassColorAttachment<'a>,
     pub depth_stencil_attachment: wgpu::RenderPassDepthStencilAttachment<'a>,
 }
@@ -306,24 +307,101 @@ impl StageRendering<'_> {
                 ..Default::default()
             });
 
-            render_pass.set_pipeline(self.pipeline);
-            render_pass.set_bind_group(0, Some(primitive_bind_group.as_ref()), &[]);
-            draw_calls.draw(&mut render_pass);
-
-            let has_skybox = self.stage.has_skybox.load(Ordering::Relaxed);
-            if has_skybox {
-                let (pipeline, bindgroup) = self
-                    .stage
-                    .get_skybox_pipeline_and_bindgroup(&commit_result.geometry_buffer);
-                render_pass.set_pipeline(&pipeline.pipeline);
-                render_pass.set_bind_group(0, Some(bindgroup.as_ref()), &[]);
-                let camera_id = self.stage.geometry.descriptor().get().camera_id.inner();
-                render_pass.draw(0..36, camera_id..camera_id + 1);
+            let draw_skybox = |render_pass: &mut wgpu::RenderPass| {
+                if self.stage.has_skybox.load(Ordering::Relaxed) {
+                    let (pipeline, bindgroup) = self
+                        .stage
+                        .get_skybox_pipeline_and_bindgroup(&commit_result.geometry_buffer);
+                    render_pass.set_pipeline(&pipeline.pipeline);
+                    render_pass.set_bind_group(0, Some(bindgroup.as_ref()), &[]);
+                    let camera_id = self.stage.geometry.descriptor().get().camera_id.inner();
+                    render_pass.draw(0..36, camera_id..camera_id + 1);
+                }
+            };
+            match self
+                .direct
+                .filter(|_| !draw_calls.get_compute_culling_available())
+            {
+                None => {
+                    render_pass.set_pipeline(self.pipeline);
+                    render_pass.set_bind_group(0, Some(primitive_bind_group.as_ref()), &[]);
+                    draw_calls.draw(&mut render_pass);
+                    draw_skybox(&mut render_pass);
+                }
+                Some(direct) => {
+                    // Opaque primitives first and unblended, so the GPU can
+                    // drop hidden fragments; then the sky behind them; then
+                    // the translucent ones over both, farthest first. Indexed
+                    // draws let it reuse shared vertices.
+                    render_pass.set_index_buffer(
+                        commit_result.geometry_buffer.slice(..),
+                        wgpu::IndexFormat::Uint32,
+                    );
+                    for (pipeline, indexed) in
+                        [(&direct.opaque, false), (&direct.opaque_indexed, true)]
+                    {
+                        render_pass.set_pipeline(pipeline);
+                        render_pass.set_bind_group(0, Some(primitive_bind_group.as_ref()), &[]);
+                        draw_calls.draw_opaque(&mut render_pass, indexed);
+                    }
+                    draw_skybox(&mut render_pass);
+                    let view = self.stage.geometry.used_camera_view();
+                    let mut bound = None;
+                    for ir in draw_calls.translucent_back_to_front(view) {
+                        let indexed = DrawCalls::is_indexed(ir);
+                        if bound != Some(indexed) {
+                            render_pass.set_pipeline(
+                                if indexed {
+                                    &direct.translucent_indexed
+                                } else {
+                                    self.pipeline
+                                },
+                            );
+                            render_pass.set_bind_group(0, Some(primitive_bind_group.as_ref()), &[]);
+                            bound = Some(indexed);
+                        }
+                        DrawCalls::draw_primitive(&mut render_pass, ir);
+                    }
+                }
             }
         }
         let sindex = self.stage.queue().submit(std::iter::once(encoder.finish()));
         (sindex, maybe_indirect_buffer)
     }
+}
+
+/// The pipelines of the direct draw path besides the blended, unindexed
+/// [`Stage::create_primitive_pipeline`].
+pub(crate) struct DirectPipelines {
+    opaque: wgpu::RenderPipeline,
+    opaque_indexed: wgpu::RenderPipeline,
+    translucent_indexed: wgpu::RenderPipeline,
+}
+
+impl DirectPipelines {
+    fn new(device: &wgpu::Device, multisample_count: u32) -> Self {
+        let create = |blend, indexed| {
+            Stage::create_primitive_pipeline_with(
+                device,
+                wgpu::TextureFormat::Rgba16Float,
+                multisample_count,
+                blend,
+                indexed,
+            )
+        };
+        Self {
+            opaque: create(None, false),
+            opaque_indexed: create(None, true),
+            translucent_indexed: create(Some(wgpu::BlendState::ALPHA_BLENDING), true),
+        }
+    }
+}
+
+/// A pass over the lit scene in linear HDR, with the frame's depth: haze,
+/// ambient occlusion, anything that needs depth before bloom and tone
+/// mapping. The pass writes its result back into `hdr`.
+pub trait HdrPass: Send + Sync {
+    fn run(&self, device: &wgpu::Device, queue: &wgpu::Queue, hdr: &Texture, depth: &Texture);
 }
 
 /// Entrypoint for staging data on the GPU and interacting with lighting.
@@ -399,8 +477,12 @@ pub struct Stage {
     pub(crate) lighting: Lighting,
 
     pub(crate) primitive_pipeline: Arc<RwLock<wgpu::RenderPipeline>>,
+    pub(crate) direct_pipelines: Arc<RwLock<DirectPipelines>>,
     pub(crate) primitive_bind_group: ManagedBindGroup,
     pub(crate) primitive_bind_group_created: Arc<AtomicUsize>,
+    /// The shadow atlas texture the primitive bind group holds; adding a
+    /// shadow map replaces it.
+    pub(crate) bound_shadow_atlas: Arc<AtomicUsize>,
 
     pub(crate) skybox_pipeline: Arc<RwLock<Option<Arc<SkyboxRenderPipeline>>>>,
 
@@ -428,6 +510,7 @@ pub struct Stage {
 
     pub(crate) has_bloom: Arc<AtomicBool>,
     pub(crate) has_debug_overlay: Arc<AtomicBool>,
+    pub(crate) hdr_pass: Arc<RwLock<Option<Arc<dyn HdrPass>>>>,
 
     pub(crate) stage_slab_buffer: Arc<RwLock<SlabBuffer<wgpu::Buffer>>>,
 
@@ -990,7 +1073,12 @@ impl Stage {
     #[must_use]
     pub fn commit(&self) -> StageCommitResult {
         let (materials_atlas_texture_was_recreated, materials_buffer) = self.materials.commit();
-        if materials_atlas_texture_was_recreated {
+        let shadow_atlas = self.lighting.shadow_map_atlas.get_texture().id();
+        let shadow_atlas_was_recreated = self
+            .bound_shadow_atlas
+            .swap(shadow_atlas, Ordering::Relaxed)
+            != shadow_atlas;
+        if materials_atlas_texture_was_recreated || shadow_atlas_was_recreated {
             self.primitive_bind_group.invalidate();
         }
         let geometry_buffer = self.geometry.commit();
@@ -1115,9 +1203,29 @@ impl Stage {
         fragment_color_format: wgpu::TextureFormat,
         multisample_count: u32,
     ) -> wgpu::RenderPipeline {
+        Self::create_primitive_pipeline_with(
+            device,
+            fragment_color_format,
+            multisample_count,
+            Some(wgpu::BlendState::ALPHA_BLENDING),
+            false,
+        )
+    }
+
+    fn create_primitive_pipeline_with(
+        device: &wgpu::Device,
+        fragment_color_format: wgpu::TextureFormat,
+        multisample_count: u32,
+        blend: Option<wgpu::BlendState>,
+        indexed: bool,
+    ) -> wgpu::RenderPipeline {
         log::trace!("creating stage render pipeline");
         let label = Some("primitive");
-        let vertex_linkage = crate::linkage::primitive_vertex::linkage(device);
+        let vertex_linkage = if indexed {
+            crate::linkage::primitive_vertex_indexed::linkage(device)
+        } else {
+            crate::linkage::primitive_vertex::linkage(device)
+        };
         let fragment_linkage = crate::linkage::primitive_fragment::linkage(device);
 
         let bind_group_layout = Self::primitive_pipeline_bindgroup_layout(device);
@@ -1162,7 +1270,7 @@ impl Stage {
                 entry_point: Some(fragment_linkage.entry_point),
                 targets: &[Some(wgpu::ColorTargetState {
                     format: fragment_color_format,
-                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                    blend,
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
                 compilation_options: Default::default(),
@@ -1209,6 +1317,7 @@ impl Stage {
             wgpu::TextureFormat::Rgba16Float,
             multisample_count,
         );
+        let direct_pipelines = DirectPipelines::new(device, multisample_count);
         let geometry_buffer = geometry.slab_allocator().commit();
         let lighting = Lighting::new(stage_config.shadow_map_atlas_size, &geometry);
 
@@ -1230,8 +1339,10 @@ impl Stage {
             geometry,
 
             primitive_pipeline: Arc::new(RwLock::new(stage_pipeline)),
+            direct_pipelines: Arc::new(RwLock::new(direct_pipelines)),
             primitive_bind_group: ManagedBindGroup::default(),
             primitive_bind_group_created: Arc::new(0.into()),
+            bound_shadow_atlas: Arc::new(0.into()),
 
             ibl: Arc::new(RwLock::new(ibl)),
             skybox: Arc::new(RwLock::new(skybox)),
@@ -1245,6 +1356,7 @@ impl Stage {
             textures_bindgroup: Default::default(),
             debug_overlay: DebugOverlay::new(device, ctx.get_render_target().format()),
             has_debug_overlay: Arc::new(false.into()),
+            hdr_pass: Default::default(),
             hdr_texture,
             msaa_render_target,
             msaa_sample_count: Arc::new(multisample_count.into()),
@@ -1302,6 +1414,11 @@ impl Stage {
             wgpu::TextureFormat::Rgba16Float,
             multisample_count,
         );
+        *self
+            .direct_pipelines
+            .write()
+            .expect("direct_pipelines write") =
+            DirectPipelines::new(self.device(), multisample_count);
         let size = self.get_size();
         // UNWRAP: POP
         *self.depth_texture.write().expect("depth_texture write") = Texture::create_depth_texture(
@@ -1613,6 +1730,12 @@ impl Stage {
         NestedTransform::new(self.geometry.slab_allocator())
     }
 
+    /// Runs `pass` on every frame's lit scene, after the main pass and
+    /// before bloom and tone mapping; `None` removes it.
+    pub fn set_hdr_pass(&self, pass: Option<Arc<dyn HdrPass>>) {
+        *self.hdr_pass.write().expect("hdr_pass write") = pass;
+    }
+
     /// Render the staged scene into the given view.
     pub fn render(&self, view: &wgpu::TextureView) {
         // UNWRAP: POP
@@ -1667,13 +1790,19 @@ impl Stage {
             .primitive_pipeline
             .read()
             .expect("primitive_pipeline read");
+        let direct_pipelines_guard = self.direct_pipelines.read().expect("direct_pipelines read");
         let (_submission_index, maybe_indirect_buffer) = StageRendering {
             pipeline: &pipeline_guard,
+            direct: Some(&direct_pipelines_guard),
             stage: self,
             color_attachment: render_pass_color_attachment,
             depth_stencil_attachment: render_pass_depth_attachment,
         }
         .run();
+
+        if let Some(pass) = self.hdr_pass.read().expect("hdr_pass read").as_ref() {
+            pass.run(self.device(), self.queue(), &hdr_texture, &depth_texture);
+        }
 
         // then render bloom
         if self.has_bloom.load(Ordering::Relaxed) {

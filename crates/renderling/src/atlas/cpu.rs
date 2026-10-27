@@ -42,6 +42,9 @@ pub enum AtlasError {
     #[snafu(display("Missing bindgroup {layer}"))]
     MissingBindgroup { layer: u32 },
 
+    #[snafu(display("Atlas has no blitter for its format"))]
+    MissingBlitter,
+
     #[snafu(display("{source}"))]
     Texture {
         source: crate::texture::TextureError,
@@ -206,8 +209,10 @@ pub struct Atlas {
     label: Option<String>,
     descriptor: Hybrid<AtlasDescriptor>,
     /// Used for user updates into the atlas by blit images into specific
-    /// frames.
-    blitter: AtlasBlitter,
+    /// frames; a depth atlas has none.
+    blitter: Option<AtlasBlitter>,
+    /// Moves and fills a depth atlas's frames.
+    depth_blitter: Option<Arc<DepthBlitter>>,
 }
 
 impl Atlas {
@@ -260,13 +265,21 @@ impl Atlas {
         }
         queue.submit(Some(encoder.finish()));
 
+        // A depth atlas holds shadow maps, read through 2x2 comparison filtering.
+        let is_depth = texture.format().is_depth_stencil_format();
+        let filter = if is_depth {
+            wgpu::FilterMode::Linear
+        } else {
+            wgpu::FilterMode::Nearest
+        };
         let sampler_desc = wgpu::SamplerDescriptor {
             address_mode_u: wgpu::AddressMode::ClampToEdge,
             address_mode_v: wgpu::AddressMode::ClampToEdge,
             address_mode_w: wgpu::AddressMode::ClampToEdge,
-            mag_filter: wgpu::FilterMode::Nearest,
-            min_filter: wgpu::FilterMode::Nearest,
+            mag_filter: filter,
+            min_filter: filter,
             mipmap_filter: wgpu::FilterMode::Nearest,
+            compare: is_depth.then_some(wgpu::CompareFunction::LessEqual),
             ..Default::default()
         };
 
@@ -294,23 +307,29 @@ impl Atlas {
             size: UVec3::new(size.width, size.height, size.depth_or_array_layers),
         });
         let label = label.map(|s| s.to_owned());
-        let blitter = AtlasBlitter::new(
-            slab.device(),
-            texture.texture.format(),
-            wgpu::FilterMode::Linear,
-        );
+        let format = texture.texture.format();
+        let is_depth = format.is_depth_stencil_format();
+        let blitter =
+            (!is_depth).then(|| AtlasBlitter::new(slab.device(), format, wgpu::FilterMode::Linear));
+        let depth_blitter = is_depth.then(|| Arc::new(DepthBlitter::new(slab.device(), format)));
         Atlas {
             slab: slab.clone(),
             layers: Arc::new(RwLock::new(layers)),
             descriptor,
             label,
             blitter,
+            depth_blitter,
             texture_array: Arc::new(RwLock::new(texture)),
         }
     }
 
     pub fn descriptor_id(&self) -> Id<AtlasDescriptor> {
         self.descriptor.id()
+    }
+
+    /// What fills a depth atlas's frames; `None` for a colour atlas.
+    pub(crate) fn depth_blitter(&self) -> Option<&DepthBlitter> {
+        self.depth_blitter.as_deref()
     }
 
     pub fn len(&self) -> usize {
@@ -384,6 +403,7 @@ impl Atlas {
             Some(&self.slab),
             &texture_array,
             self.label.as_deref(),
+            self.depth_blitter(),
         )?;
 
         // Commit our newly staged values, now that everything is done.
@@ -437,6 +457,7 @@ impl Atlas {
             None::<&SlabAllocator<WgpuRuntime>>,
             &texture_array,
             self.label.as_deref(),
+            self.depth_blitter(),
         )?;
 
         // Commit our newly staged values, now that everything is done.
@@ -578,13 +599,32 @@ impl Atlas {
         updates: impl IntoIterator<Item = (&'a AtlasTexture, &'a texture::Texture)>,
     ) -> Result<wgpu::SubmissionIndex, AtlasError> {
         let updates = updates.into_iter().collect::<Vec<_>>();
-        let op = AtlasBlittingOperation::new(&self.blitter, self, updates.len());
         let runtime = self.slab.runtime();
         let mut encoder = runtime
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("Atlas::update_texture"),
             });
+        let Some(blitter) = &self.blitter else {
+            let depth = self.depth_blitter().context(MissingBlitterSnafu)?;
+            let atlas = self.get_texture();
+            for (i, (atlas_texture, source_texture)) in updates.into_iter().enumerate() {
+                let frame = atlas_texture.descriptor();
+                depth.blit(
+                    &runtime.device,
+                    &mut encoder,
+                    &source_texture.texture,
+                    i as u32,
+                    UVec2::ZERO,
+                    &atlas.texture,
+                    frame.layer_index,
+                    frame.offset_px,
+                    frame.size_px,
+                );
+            }
+            return Ok(runtime.queue.submit(Some(encoder.finish())));
+        };
+        let op = AtlasBlittingOperation::new(blitter, self, updates.len());
         for (i, (atlas_texture, source_texture)) in updates.into_iter().enumerate() {
             op.run(
                 runtime,
@@ -728,6 +768,7 @@ impl StagedResources {
         slab: Option<&SlabAllocator<WgpuRuntime>>,
         old_texture_array: &Texture,
         label: Option<&str>,
+        depth_blitter: Option<&DepthBlitter>,
     ) -> Result<Self, AtlasError> {
         let runtime = runtime.as_ref();
         let new_texture_array = Atlas::create_texture(
@@ -775,6 +816,11 @@ impl StagedResources {
                             .frames
                             .push(InternalAtlasTexture::from_hybrid(&texture));
                         output.push((original_index, texture));
+                        // A depth frame starts cleared: it is a shadow map,
+                        // rendered on the GPU, never uploaded.
+                        if depth_blitter.is_some() {
+                            continue;
+                        }
 
                         let bytes = convert_pixels(
                             image.pixels.clone(),
@@ -823,25 +869,39 @@ impl StagedResources {
                         debug_assert_eq!(t.size_px, size_px);
                         // copy the frame from the old texture to the new texture
                         // in a new destination
-                        encoder.copy_texture_to_texture(
-                            wgpu::TexelCopyTextureInfo {
-                                texture: &old_texture_array.texture,
-                                mip_level: 0,
-                                origin: t.origin(),
-                                aspect: wgpu::TextureAspect::All,
-                            },
-                            wgpu::TexelCopyTextureInfo {
-                                texture: &new_texture_array.texture,
-                                mip_level: 0,
-                                origin: wgpu::Origin3d {
-                                    x: offset_px.x,
-                                    y: offset_px.y,
-                                    z: layer_index as u32,
+                        if let Some(blitter) = depth_blitter {
+                            blitter.blit(
+                                &runtime.device,
+                                &mut encoder,
+                                &old_texture_array.texture,
+                                t.layer_index,
+                                t.offset_px,
+                                &new_texture_array.texture,
+                                layer_index as u32,
+                                offset_px,
+                                size_px,
+                            );
+                        } else {
+                            encoder.copy_texture_to_texture(
+                                wgpu::TexelCopyTextureInfo {
+                                    texture: &old_texture_array.texture,
+                                    mip_level: 0,
+                                    origin: t.origin(),
+                                    aspect: wgpu::TextureAspect::All,
                                 },
-                                aspect: wgpu::TextureAspect::All,
-                            },
-                            t.size_as_extent(),
-                        );
+                                wgpu::TexelCopyTextureInfo {
+                                    texture: &new_texture_array.texture,
+                                    mip_level: 0,
+                                    origin: wgpu::Origin3d {
+                                        x: offset_px.x,
+                                        y: offset_px.y,
+                                        z: layer_index as u32,
+                                    },
+                                    aspect: wgpu::TextureAspect::All,
+                                },
+                                t.size_as_extent(),
+                            );
+                        }
 
                         t.layer_index = layer_index as u32;
                         t.frame_index = frame_index as u32;
@@ -865,6 +925,192 @@ impl StagedResources {
             image_additions: output,
             layers: temporary_layers,
         })
+    }
+}
+
+/// Copies depth between textures by drawing it. A depth texture can be
+/// neither written from the CPU nor copied a sub-rectangle at a time, so a
+/// depth atlas fills and moves its frames with this pass.
+pub(crate) struct DepthBlitter {
+    pipeline: wgpu::RenderPipeline,
+    layout: wgpu::BindGroupLayout,
+}
+
+const DEPTH_BLIT_WGSL: &str = r#"
+struct Region {
+    // The source texel the destination's first texel takes, and its layer.
+    source: vec4<i32>,
+    // The destination's first texel.
+    origin: vec4<f32>,
+};
+
+@group(0) @binding(0) var source: texture_depth_2d_array;
+@group(0) @binding(1) var<uniform> region: Region;
+
+@vertex
+fn vs(@builtin(vertex_index) i: u32) -> @builtin(position) vec4<f32> {
+    let x = f32((i << 1u) & 2u);
+    let y = f32(i & 2u);
+    return vec4<f32>(x * 2.0 - 1.0, y * 2.0 - 1.0, 0.0, 1.0);
+}
+
+@fragment
+fn fs(@builtin(position) pos: vec4<f32>) -> @builtin(frag_depth) f32 {
+    let at = vec2<i32>(pos.xy - region.origin.xy) + region.source.xy;
+    return textureLoad(source, at, region.source.z, 0);
+}
+"#;
+
+impl DepthBlitter {
+    pub(crate) fn new(device: &wgpu::Device, format: wgpu::TextureFormat) -> Self {
+        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("depth-blit"),
+            source: wgpu::ShaderSource::Wgsl(DEPTH_BLIT_WGSL.into()),
+        });
+        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("depth-blit"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Depth,
+                        view_dimension: wgpu::TextureViewDimension::D2Array,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+            ],
+        });
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("depth-blit"),
+            bind_group_layouts: &[&layout],
+            push_constant_ranges: &[],
+        });
+        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("depth-blit"),
+            layout: Some(&pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &module,
+                entry_point: Some("vs"),
+                compilation_options: Default::default(),
+                buffers: &[],
+            },
+            primitive: wgpu::PrimitiveState::default(),
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format,
+                depth_write_enabled: true,
+                depth_compare: wgpu::CompareFunction::Always,
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            }),
+            multisample: wgpu::MultisampleState::default(),
+            fragment: Some(wgpu::FragmentState {
+                module: &module,
+                entry_point: Some("fs"),
+                compilation_options: Default::default(),
+                targets: &[],
+            }),
+            multiview: None,
+            cache: None,
+        });
+        Self { pipeline, layout }
+    }
+
+    /// Copy `size` texels from `from_origin` in layer `from_layer` of `from`
+    /// to `to_origin` in layer `to_layer` of `to`.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn blit(
+        &self,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+        from: &wgpu::Texture,
+        from_layer: u32,
+        from_origin: UVec2,
+        to: &wgpu::Texture,
+        to_layer: u32,
+        to_origin: UVec2,
+        size: UVec2,
+    ) {
+        use wgpu::util::DeviceExt;
+        let region: [u32; 8] = [
+            from_origin.x,
+            from_origin.y,
+            from_layer,
+            0,
+            (to_origin.x as f32).to_bits(),
+            (to_origin.y as f32).to_bits(),
+            0,
+            0,
+        ];
+        let uniforms = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("depth-blit"),
+            contents: bytemuck::cast_slice(&region),
+            usage: wgpu::BufferUsages::UNIFORM,
+        });
+        let source = from.create_view(&wgpu::TextureViewDescriptor {
+            label: Some("depth-blit-source"),
+            dimension: Some(wgpu::TextureViewDimension::D2Array),
+            aspect: wgpu::TextureAspect::DepthOnly,
+            ..Default::default()
+        });
+        let target = to.create_view(&wgpu::TextureViewDescriptor {
+            label: Some("depth-blit-target"),
+            dimension: Some(wgpu::TextureViewDimension::D2),
+            aspect: wgpu::TextureAspect::DepthOnly,
+            base_array_layer: to_layer,
+            array_layer_count: Some(1),
+            ..Default::default()
+        });
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("depth-blit"),
+            layout: &self.layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&source),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: uniforms.as_entire_binding(),
+                },
+            ],
+        });
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("depth-blit"),
+            color_attachments: &[],
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view: &target,
+                depth_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Load,
+                    store: wgpu::StoreOp::Store,
+                }),
+                stencil_ops: None,
+            }),
+            ..Default::default()
+        });
+        pass.set_viewport(
+            to_origin.x as f32,
+            to_origin.y as f32,
+            size.x as f32,
+            size.y as f32,
+            0.0,
+            1.0,
+        );
+        pass.set_scissor_rect(to_origin.x, to_origin.y, size.x, size.y);
+        pass.set_pipeline(&self.pipeline);
+        pass.set_bind_group(0, &bind_group, &[]);
+        pass.draw(0..3, 0..1);
     }
 }
 

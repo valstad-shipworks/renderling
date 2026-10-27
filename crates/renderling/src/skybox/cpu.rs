@@ -248,29 +248,40 @@ impl Skybox {
         &self.environment_cubemap
     }
 
-    /// Convert an HDR [`AtlasImage`] into a texture.
+    /// Convert an HDR [`AtlasImage`] of 32-bit float RGBA into a texture.
+    ///
+    /// It is stored as half floats, which every device filters, so building
+    /// the cubemap from it interpolates between texels instead of picking
+    /// one: a picked texel steps along every bright edge in the image.
     pub fn hdr_texture_from_atlas_image(
         runtime: impl AsRef<WgpuRuntime>,
         img: AtlasImage,
     ) -> Texture {
         let runtime = runtime.as_ref();
+        let pixels: Vec<u8> = img
+            .pixels
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .flat_map(|c| half::f16::from_f32(f32::from_ne_bytes(*c)).to_ne_bytes())
+            .collect();
         Texture::new_with(
             runtime,
             Some("create hdr texture"),
             None,
             Some(runtime.device.create_sampler(&wgpu::SamplerDescriptor {
-                mag_filter: wgpu::FilterMode::Nearest,
-                min_filter: wgpu::FilterMode::Nearest,
+                mag_filter: wgpu::FilterMode::Linear,
+                min_filter: wgpu::FilterMode::Linear,
                 mipmap_filter: wgpu::FilterMode::Nearest,
                 ..Default::default()
             })),
-            wgpu::TextureFormat::Rgba32Float,
+            wgpu::TextureFormat::Rgba16Float,
             4,
-            4,
+            2,
             img.size.x,
             img.size.y,
             1,
-            &img.pixels,
+            &pixels,
         )
     }
 

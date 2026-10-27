@@ -5,6 +5,7 @@ use craballoc::{
     slab::SlabBuffer,
 };
 use crabslab::Id;
+use glam::Mat4;
 
 use crate::{
     context::Context,
@@ -265,6 +266,56 @@ impl DrawCalls {
             let id = ir.descriptor.id();
             let instance_range = id.inner()..id.inner() + 1;
             render_pass.draw(vertex_range, instance_range);
+        }
+    }
+
+    /// Draw the opaque primitives directly: those with indices or those
+    /// without. An indexed draw expects the geometry slab as the render
+    /// pass's index buffer.
+    pub(crate) fn draw_opaque(&self, render_pass: &mut wgpu::RenderPass, indexed: bool) {
+        for ir in self.renderlets.iter().filter(|ir| !ir.is_translucent()) {
+            if Self::is_indexed(ir) == indexed {
+                Self::draw_primitive(render_pass, ir);
+            }
+        }
+    }
+
+    /// The translucent primitives, farthest from a camera with `view` first,
+    /// so that each blends over what lies behind it. A primitive's distance
+    /// is its bounds' centre's, along the view axis.
+    pub(crate) fn translucent_back_to_front(&self, view: Mat4) -> Vec<&Primitive> {
+        let mut by_depth: Vec<(f32, &Primitive)> = self
+            .renderlets
+            .iter()
+            .filter(|ir| ir.is_translucent())
+            .map(|ir| {
+                let center = ir.descriptor.get().bounds.center;
+                let model = ir
+                    .transform()
+                    .as_ref()
+                    .map_or(Mat4::IDENTITY, |t| Mat4::from(t.descriptor()));
+                (-(view * model).transform_point3(center).z, ir)
+            })
+            .collect();
+        by_depth.sort_by(|a, b| b.0.total_cmp(&a.0));
+        by_depth.into_iter().map(|(_, ir)| ir).collect()
+    }
+
+    pub(crate) fn is_indexed(ir: &Primitive) -> bool {
+        !ir.descriptor.get().indices_array.is_null()
+    }
+
+    /// Draw one primitive directly, indexed when it has indices.
+    pub(crate) fn draw_primitive(render_pass: &mut wgpu::RenderPass, ir: &Primitive) {
+        let desc = ir.descriptor.get();
+        let id = ir.descriptor.id();
+        let instances = id.inner()..id.inner() + 1;
+        if desc.indices_array.is_null() {
+            render_pass.draw(0..desc.get_vertex_count(), instances);
+        } else {
+            let start = desc.indices_array.starting_index() as u32;
+            let end = start + desc.indices_array.len() as u32;
+            render_pass.draw_indexed(start..end, 0, instances);
         }
     }
 

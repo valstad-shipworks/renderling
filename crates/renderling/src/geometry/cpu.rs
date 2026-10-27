@@ -333,7 +333,7 @@ impl AsRef<SlabAllocator<WgpuRuntime>> for Geometry {
 impl Geometry {
     pub fn new(runtime: impl AsRef<WgpuRuntime>, resolution: UVec2, atlas_size: UVec2) -> Self {
         let runtime = runtime.as_ref();
-        let slab = SlabAllocator::new(runtime, "geometry", wgpu::BufferUsages::empty());
+        let slab = SlabAllocator::new(runtime, "geometry", wgpu::BufferUsages::INDEX);
         let descriptor = slab.new_value(GeometryDescriptor {
             atlas_size,
             resolution,
@@ -387,6 +387,15 @@ impl Geometry {
             self.use_camera(&c);
         }
         c
+    }
+
+    /// The view matrix of the camera in use, or identity without one.
+    pub(crate) fn used_camera_view(&self) -> Mat4 {
+        self.camera
+            .lock()
+            .expect("geometry camera lock")
+            .as_ref()
+            .map_or(Mat4::IDENTITY, Camera::view)
     }
 
     /// Set all geometry to use the given camera.

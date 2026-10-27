@@ -1,7 +1,7 @@
 [package]
 publish = ["forgejo"]
 name = "renderling"
-version = "0.6.3"
+version = "0.6.6"
 edition = "2021"
 description = "User-friendly real-time rendering. 🍖"
 repository = "https://github.com/schell/renderling"
@@ -57,6 +57,9 @@ async-channel = {workspace = true}
 bytemuck = {workspace = true}
 craballoc.workspace = true
 crabslab = { workspace = true, features = ["default"] }
+# crabslab-derive 0.4.7 dropped what crabslab 0.6.6 imports from it
+# (`IsContainer`, `impl_slabitem_tuples`); held here so fresh resolutions build.
+crabslab-derive = "=0.4.6"
 crunch = "0.5"
 dagga = {workspace=true}
 futures-lite = { workspace = true, optional = true }

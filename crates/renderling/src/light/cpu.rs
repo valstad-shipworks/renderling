@@ -13,7 +13,7 @@ use glam::{Mat4, UVec2, Vec3, Vec4};
 use snafu::prelude::*;
 
 use crate::{
-    atlas::{Atlas, AtlasBlitter, AtlasError},
+    atlas::{Atlas, AtlasError},
     geometry::Geometry,
     transform::{shader::TransformDescriptor, NestedTransform, Transform},
 };
@@ -722,7 +722,6 @@ pub struct Lighting {
     /// mirror the image and reverse triangle winding.
     pub(crate) shadow_map_update_pipeline_mirrored: Arc<wgpu::RenderPipeline>,
     pub(crate) shadow_map_update_bindgroup_layout: Arc<wgpu::BindGroupLayout>,
-    pub(crate) shadow_map_update_blitter: AtlasBlitter,
     pub(crate) shadow_map_atlas: Atlas,
 }
 
@@ -749,7 +748,7 @@ impl LightingBindGroupLayoutEntries {
                 binding: starting_binding + 1,
                 visibility: wgpu::ShaderStages::FRAGMENT,
                 ty: wgpu::BindingType::Texture {
-                    sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                    sample_type: wgpu::TextureSampleType::Depth,
                     view_dimension: wgpu::TextureViewDimension::D2Array,
                     multisampled: false,
                 },
@@ -758,7 +757,7 @@ impl LightingBindGroupLayoutEntries {
             shadow_map_sampler: wgpu::BindGroupLayoutEntry {
                 binding: starting_binding + 2,
                 visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::NonFiltering),
+                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison),
                 count: None,
             },
         }
@@ -777,7 +776,7 @@ impl Lighting {
         Atlas::new(
             light_slab,
             size,
-            Some(wgpu::TextureFormat::R32Float),
+            Some(wgpu::TextureFormat::Depth32Float),
             Some("shadow-map-atlas"),
             Some(usage),
         )
@@ -815,11 +814,6 @@ impl Lighting {
             shadow_map_update_pipeline,
             shadow_map_update_pipeline_mirrored,
             shadow_map_update_bindgroup_layout,
-            shadow_map_update_blitter: AtlasBlitter::new(
-                &runtime.device,
-                wgpu::TextureFormat::R32Float,
-                wgpu::FilterMode::Nearest,
-            ),
         }
     }
 

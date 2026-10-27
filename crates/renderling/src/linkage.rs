@@ -37,6 +37,7 @@ pub mod prefilter_environment_cubemap_fragment;
 pub mod prefilter_environment_cubemap_vertex;
 pub mod primitive_fragment;
 pub mod primitive_vertex;
+pub mod primitive_vertex_indexed;
 pub mod shadow_mapping_fragment;
 pub mod shadow_mapping_vertex;
 pub mod skybox_cubemap_fragment;

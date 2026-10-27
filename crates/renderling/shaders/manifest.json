@@ -160,6 +160,11 @@
     "wgsl_entry_point": "primitiveshaderprimitive_vertex"
   },
   {
+    "source_path": "shaders/primitive-shader-primitive_vertex_indexed.spv",
+    "entry_point": "primitive::shader::primitive_vertex_indexed",
+    "wgsl_entry_point": "primitiveshaderprimitive_vertex_indexed"
+  },
+  {
     "source_path": "shaders/skybox-shader-skybox_cubemap_fragment.spv",
     "entry_point": "skybox::shader::skybox_cubemap_fragment",
     "wgsl_entry_point": "skyboxshaderskybox_cubemap_fragment"
