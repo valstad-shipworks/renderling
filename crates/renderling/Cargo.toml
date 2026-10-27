@@ -1,7 +1,7 @@
 [package]
 publish = ["forgejo"]
 name = "renderling"
-version = "0.6.5"
+version = "0.6.6"
 edition = "2021"
 description = "User-friendly real-time rendering. 🍖"
 repository = "https://github.com/schell/renderling"
