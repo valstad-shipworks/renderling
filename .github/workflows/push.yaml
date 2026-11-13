@@ -11,6 +11,10 @@ env:
   # For setup-rust, see https://github.com/moonrepo/setup-rust/issues/22
   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
   CARGO_GPU_VERSION: 0.11.0
+  # renderling's manifest names the `forgejo` registry; cargo refuses to parse
+  # it unless the registry is configured.
+  CARGO_REGISTRIES_FORGEJO_INDEX: sparse+https://git.valstad.com/api/packages/valstad-shipworks/cargo/
+  CARGO_REGISTRIES_FORGEJO_TOKEN: "Bearer ${{ secrets.FORGEJO_TOKEN }}"
 
 jobs:
   # Installs cargo deps and sets the cache directory for subsequent jobs
