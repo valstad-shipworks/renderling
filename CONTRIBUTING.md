@@ -29,7 +29,7 @@ So please disclose if the _outputs_ of generative AI is what is being committed.
 
 1. Fork and clone the repository
 2. Install Rust via [rustup](https://rustup.rs)
-3. Install `cargo-gpu`: `cargo install --git https://github.com/rust-gpu/cargo-gpu cargo-gpu`
+3. Install `cargo-gpu`: `cargo install cargo-gpu --version 0.11.0 --locked`
 4. Optionally install `cargo-nextest`: `cargo install cargo-nextest`
 
 ## Development Workflow

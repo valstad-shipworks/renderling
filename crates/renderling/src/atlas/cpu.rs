@@ -278,7 +278,7 @@ impl Atlas {
             address_mode_w: wgpu::AddressMode::ClampToEdge,
             mag_filter: filter,
             min_filter: filter,
-            mipmap_filter: wgpu::FilterMode::Nearest,
+            mipmap_filter: wgpu::MipmapFilterMode::Nearest,
             compare: is_depth.then_some(wgpu::CompareFunction::LessEqual),
             ..Default::default()
         };
@@ -994,8 +994,8 @@ impl DepthBlitter {
         });
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("depth-blit"),
-            bind_group_layouts: &[&layout],
-            push_constant_ranges: &[],
+            bind_group_layouts: &[Some(&layout)],
+            immediate_size: 0,
         });
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("depth-blit"),
@@ -1009,8 +1009,8 @@ impl DepthBlitter {
             primitive: wgpu::PrimitiveState::default(),
             depth_stencil: Some(wgpu::DepthStencilState {
                 format,
-                depth_write_enabled: true,
-                depth_compare: wgpu::CompareFunction::Always,
+                depth_write_enabled: Some(true),
+                depth_compare: Some(wgpu::CompareFunction::Always),
                 stencil: wgpu::StencilState::default(),
                 bias: wgpu::DepthBiasState::default(),
             }),
@@ -1021,7 +1021,7 @@ impl DepthBlitter {
                 compilation_options: Default::default(),
                 targets: &[],
             }),
-            multiview: None,
+            multiview_mask: None,
             cache: None,
         });
         Self { pipeline, layout }
@@ -1243,6 +1243,7 @@ impl AtlasBlittingOperation {
                 array_layer_count: Some(1),
             });
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            multiview_mask: None,
             label: Some("atlas-blitter"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                 view: &atlas_view,
@@ -1340,13 +1341,14 @@ impl AtlasBlitter {
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("atlas-blitter"),
-            bind_group_layouts: &[&bind_group_layout],
-            push_constant_ranges: &[],
+            bind_group_layouts: &[Some(&bind_group_layout)],
+            immediate_size: 0,
         });
 
         let vertex = crate::linkage::atlas_blit_vertex::linkage(device);
         let fragment = crate::linkage::atlas_blit_fragment::linkage(device);
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            multiview_mask: None,
             label: Some("atlas-blitter"),
             layout: Some(&pipeline_layout),
             vertex: wgpu::VertexState {
@@ -1376,7 +1378,6 @@ impl AtlasBlitter {
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
             }),
-            multiview: None,
             cache: None,
         });
 
