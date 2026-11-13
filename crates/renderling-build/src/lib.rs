@@ -281,8 +281,9 @@ impl RenderlingPaths {
             std::fs::write(&filepath, contents).unwrap();
         }
         // Just format the whole project. I know this is less than ideal,
-        // but people should be running with a formatter in their editor, and all of
-        // this is temporary given the wgsl-rs re-stacking happening this year (2026)
+        // but people should be running with a formatter in their editor, and
+        // all of this is temporary given the wgsl-rs re-stacking happening this
+        // year (2026)
         std::process::Command::new("cargo")
             .args(["+nightly", "fmt"])
             .output()

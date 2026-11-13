@@ -164,8 +164,8 @@ impl From<image::DynamicImage> for AtlasImage {
         AtlasImage {
             pixels,
             format,
-            // Most of the time when people are using `image` to load images, those images
-            // have color data that was authored in sRGB space.
+            // Most of the time when people are using `image` to load images,
+            // those images have color data that was authored in sRGB space.
             apply_linear_transfer: true,
             size: UVec2::new(width, height),
         }

@@ -229,7 +229,8 @@ impl PrimitiveBindGroup<'_> {
 
 /// Performs a rendering of an entire scene, given the resources at hand.
 pub(crate) struct StageRendering<'a> {
-    // TODO: include the rest of the needed paramaters from `stage`, and then remove `stage`
+    // TODO: include the rest of the needed paramaters from `stage`, and then
+    // remove `stage`
     pub stage: &'a Stage,
     pub pipeline: &'a wgpu::RenderPipeline,
     pub direct: Option<&'a DirectPipelines>,
@@ -289,7 +290,8 @@ impl StageRendering<'_> {
 
         let mut draw_calls = self.stage.draw_calls.write().expect("draw_calls write");
         let depth_texture = self.stage.depth_texture.read().expect("depth_texture read");
-        // UNWRAP: safe because we know the depth texture format will always match
+        // UNWRAP: safe because we know the depth texture format will always
+        // match
         let maybe_indirect_buffer = draw_calls.pre_draw(&depth_texture).unwrap();
 
         log::trace!("rendering");
@@ -1307,7 +1309,8 @@ impl Stage {
         let depth_texture =
             Texture::create_depth_texture(device, w, h, multisample_count, Some("stage-depth"));
         let msaa_render_target = Default::default();
-        // UNWRAP: safe because no other references at this point (created above^)
+        // UNWRAP: safe because no other references at this point (created
+        // above^)
         let bloom = Bloom::new(ctx, &hdr_texture.read().expect("hdr_texture read"));
         let tonemapping = Tonemapping::new(
             runtime,

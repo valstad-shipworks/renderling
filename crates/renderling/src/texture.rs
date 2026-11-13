@@ -87,8 +87,8 @@ pub(crate) fn get_next_texture_id() -> usize {
 #[derive(Debug, Clone)]
 pub struct Texture {
     pub texture: Arc<wgpu::Texture>,
-    // TODO: revisit whether we really need to create view and sampler for textures
-    // automatically
+    // TODO: revisit whether we really need to create view and sampler for
+    // textures automatically
     pub view: Arc<wgpu::TextureView>,
     pub sampler: Arc<wgpu::Sampler>,
     pub(crate) id: usize,
@@ -820,8 +820,8 @@ pub async fn read_depth_texture_to_image(
         .iter()
         .copied()
         .map(|f| {
-            // Depth texture is stored as Depth32Float, but the values are normalized
-            // 0.0-1.0
+            // Depth texture is stored as Depth32Float, but the values are
+            // normalized 0.0-1.0
             (255.0 * f) as u8
         })
         .collect::<Vec<u8>>();
@@ -953,8 +953,8 @@ impl std::future::Future for MappedBuffer<'_> {
                     .get_mapped_range()
                     .expect("failed to get mapped buffer range");
                 let mut unpadded_buffer = vec![];
-                // from the padded_buffer we write just the unpadded bytes into the
-                // unpadded_buffer
+                // from the padded_buffer we write just the unpadded bytes into
+                // the unpadded_buffer
                 for chunk in padded_buffer.chunks(self.dimensions.padded_bytes_per_row) {
                     unpadded_buffer
                         .extend_from_slice(&chunk[..self.dimensions.unpadded_bytes_per_row]);

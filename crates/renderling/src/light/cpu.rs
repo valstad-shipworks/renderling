@@ -57,8 +57,8 @@ pub trait IsLight: Clone {
         //
         // The maximum should be the `Camera`'s `Frustum::depth()`.
         // TODO: in `DirectionalLightDescriptor::shadow_mapping_projection_and_view`, take Frustum
-        // as a parameter and then figure out the minimal view projection that includes that
-        // frustum
+        // as a parameter and then figure out the minimal view projection that
+        // includes that frustum
         z_near: f32,
         // Far limits of the light's reach
         z_far: f32,
@@ -592,8 +592,8 @@ impl<T: IsLight> IsLight for AnalyticalLight<T> {
         //
         // The maximum should be the `Camera`'s `Frustum::depth()`.
         // TODO: in `DirectionalLightDescriptor::shadow_mapping_projection_and_view`, take Frustum
-        // as a parameter and then figure out the minimal view projection that includes that
-        // frustum
+        // as a parameter and then figure out the minimal view projection that
+        // includes that frustum
         z_near: f32,
         // Far limits of the light's reach
         z_far: f32,

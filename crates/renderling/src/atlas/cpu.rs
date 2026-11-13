@@ -265,7 +265,8 @@ impl Atlas {
         }
         queue.submit(Some(encoder.finish()));
 
-        // A depth atlas holds shadow maps, read through 2x2 comparison filtering.
+        // A depth atlas holds shadow maps, read through 2x2 comparison
+        // filtering.
         let is_depth = texture.format().is_depth_stencil_format();
         let filter = if is_depth {
             wgpu::FilterMode::Linear
@@ -499,8 +500,8 @@ impl Atlas {
 
         if total_dropped > 0 {
             log::trace!("repacking after dropping {total_dropped} frames from the atlas");
-            // UNWRAP: safe because we can only remove frames from the atlas, which should
-            // only make it easier to pack.
+            // UNWRAP: safe because we can only remove frames from the atlas,
+            // which should only make it easier to pack.
             self.resize(runtime.as_ref(), self.get_size()).unwrap();
             true
         } else {
@@ -789,7 +790,8 @@ impl StagedResources {
             if packed_items.items.is_empty() {
                 continue;
             }
-            // UNWRAP: safe because we know this index exists because we created it above
+            // UNWRAP: safe because we know this index exists because we created
+            // it above
             let layer = temporary_layers.get_mut(layer_index).unwrap();
             for (frame_index, crunch::PackedItem { data: item, rect }) in
                 packed_items.items.into_iter().enumerate()
@@ -867,8 +869,8 @@ impl StagedResources {
                         let prev_t = texture.cache;
                         let mut t = texture.cache;
                         debug_assert_eq!(t.size_px, size_px);
-                        // copy the frame from the old texture to the new texture
-                        // in a new destination
+                        // copy the frame from the old texture to the new
+                        // texture in a new destination
                         if let Some(blitter) = depth_blitter {
                             blitter.blit(
                                 &runtime.device,
@@ -1459,7 +1461,8 @@ mod test {
     }
 
     #[test]
-    // Ensures that textures with different wrapping modes are rendered correctly.
+    // Ensures that textures with different wrapping modes are rendered
+    // correctly.
     fn uv_wrapping() {
         let icon_w = 32;
         let icon_h = 41;
@@ -1690,7 +1693,8 @@ mod test {
 
     #[test]
     fn upkeep_trims_the_atlas() {
-        // tests that Atlas::upkeep trims out unused images and repacks the atlas
+        // tests that Atlas::upkeep trims out unused images and repacks the
+        // atlas
         let ctx = Context::headless(100, 100)
             .block()
             .with_default_atlas_texture_size(UVec3::new(512, 512, 2));

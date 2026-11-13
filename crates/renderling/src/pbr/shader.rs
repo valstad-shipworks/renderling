@@ -67,10 +67,11 @@ fn geometry_smith(n: Vec3, v: Vec3, l: Vec3, roughness: f32) -> f32 {
 /// reflected. From this ratio of reflection and the energy conservation
 /// principle we can directly obtain the refracted portion of light.
 fn fresnel_schlick(
-    // dot product result between the surface's normal n and the halfway h (or view v) direction.
+    // dot product result between the surface's normal n and the halfway h (or
+    // view v) direction.
     cos_theta: f32,
-    // surface reflection at zero incidence (how much the surface reflects if looking directly at
-    // the surface)
+    // surface reflection at zero incidence (how much the surface reflects if
+    // looking directly at the surface)
     f0: Vec3,
 ) -> Vec3 {
     f0 + (1.0 - f0) * (1.0 - cos_theta).clamp(0.0, 1.0).powf(5.0)
@@ -165,8 +166,9 @@ pub fn get_material(
     material_slab: &[u32],
 ) -> MaterialDescriptor {
     if material_id.is_none() {
-        // without an explicit material (or if the entire render has no lighting)
-        // the entity will not participate in any lighting calculations
+        // without an explicit material (or if the entire render has no
+        // lighting) the entity will not participate in any lighting
+        // calculations
         MaterialDescriptor {
             has_lighting: false,
             ..Default::default()
@@ -541,11 +543,12 @@ where
                     intensity: Candela(intensity_candelas),
                 } = light_slab.read(light.into_point_id());
                 // Convert candelas into radiometric
-                // TODO: write true radiometric light conversions for Lux and Candela
+                // TODO: write true radiometric light conversions for Lux and
+                // Candela
                 let intensity = intensity_candelas / 683.0;
                 let position = transform.transform_point3(position);
-                // This definitely is the direction pointing from fragment to the light.
-                // It needs to stay this way.
+                // This definitely is the direction pointing from fragment to
+                // the light. It needs to stay this way.
                 // For more info, see
                 // <https://renderling.xyz/articles/live/light_tiling.html#point_and_spotlight_discrepancies__fri_11_june>
                 let frag_to_light = position - in_pos;
@@ -563,8 +566,8 @@ where
                     outgoing_radiance(color, albedo, attenuation, v, l, n, metallic, roughness);
                 // Unlit fragments skip the shadow lookup.
                 let shadow = if light.shadow_map_desc_id.is_some() && radiance != Vec3::ZERO {
-                    // Shadow is 1.0 when the fragment is in the shadow of this light,
-                    // and 0.0 in darkness
+                    // Shadow is 1.0 when the fragment is in the shadow of this
+                    // light, and 0.0 in darkness
                     ShadowCalculation::new(light_slab, light, in_pos, n, l).run_point(
                         light_slab,
                         shadow_map,
@@ -591,7 +594,8 @@ where
                 // Candelas are already per steradian, so like a point light's
                 // they convert with the luminous efficacy alone and fall off
                 // with the square of the distance.
-                // TODO: write true radiometric light conversions for Lux and Candela
+                // TODO: write true radiometric light conversions for Lux and
+                // Candela
                 let intensity = spot_light_descriptor.intensity.0 / 683.0;
                 let distance = calculation.frag_to_light_distance;
                 let attenuation: f32 = intensity * calculation.contribution / (distance * distance);
@@ -606,8 +610,8 @@ where
                     roughness,
                 );
                 let shadow = if light.shadow_map_desc_id.is_some() && radiance != Vec3::ZERO {
-                    // Shadow is 1.0 when the fragment is in the shadow of this light,
-                    // and 0.0 in darkness
+                    // Shadow is 1.0 when the fragment is in the shadow of this
+                    // light, and 0.0 in darkness
                     ShadowCalculation::new(light_slab, light, in_pos, n, calculation.frag_to_light)
                         .run_directional_or_spot(light_slab, shadow_map, shadow_map_sampler)
                 } else {
@@ -627,14 +631,15 @@ where
                 if n.dot(l) <= 0.0 {
                     continue;
                 }
-                // TODO: write true radiometric light conversions for Lux and Candela
+                // TODO: write true radiometric light conversions for Lux and
+                // Candela
                 let attenuation = intensity_lux.0 / 683.0;
                 let radiance =
                     outgoing_radiance(color, albedo, attenuation, v, l, n, metallic, roughness);
                 let shadow =
                     if light.shadow_map_desc_id.is_some() && radiance != Vec3::ZERO {
-                        // Shadow is 1.0 when the fragment is in the shadow of this light,
-                        // and 0.0 in darkness
+                        // Shadow is 1.0 when the fragment is in the shadow of
+                        // this light, and 0.0 in darkness
                         ShadowCalculation::new(light_slab, light, in_pos, n, l)
                             .run_directional_or_spot(light_slab, shadow_map, shadow_map_sampler)
                     } else {
@@ -649,8 +654,8 @@ where
     }
 
     my_println!("lo: {lo:?}");
-    // calculate reflectance at normal incidence; if dia-electric (like plastic) use
-    // F0 of 0.04 and if it's a metal, use the albedo color as F0 (metallic
+    // calculate reflectance at normal incidence; if dia-electric (like plastic)
+    // use F0 of 0.04 and if it's a metal, use the albedo color as F0 (metallic
     // workflow)
     let f0: Vec3 = Vec3::splat(0.04).lerp(albedo, metallic);
     let cos_theta = n.dot(v).max(0.0);
