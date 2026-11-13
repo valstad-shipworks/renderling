@@ -719,8 +719,8 @@ impl GltfNode {
 #[derive(Clone, Debug)]
 pub struct GltfSkin {
     pub index: usize,
-    // Indices of the skeleton nodes used as joints in this skin, unused internally
-    // but possibly useful.
+    // Indices of the skeleton nodes used as joints in this skin, unused
+    // internally but possibly useful.
     pub joint_nodes: Vec<usize>,
     // Index of the node used as the skeleton root.
     // When None, joints transforms resolve to scene root.
@@ -820,7 +820,8 @@ impl GltfDocument {
             for gltf_material in document.materials() {
                 Material::preprocess_images(gltf_material, &mut images)?;
             }
-            // Arc these images because they could be large and we don't want duplicates
+            // Arc these images because they could be large and we don't want
+            // duplicates
             let images = images.into_iter().map(Arc::new).collect::<Vec<_>>();
 
             log::debug!("Loading {} images into the atlas", images.len());
@@ -982,10 +983,11 @@ impl GltfDocument {
             let weights = node.weights().map(|w| w.to_vec()).unwrap_or_default();
             // From the glTF spec:
             //
-            // A mesh with morph targets MAY also define an optional mesh.weights property
-            // that stores the default targets' weights. These weights MUST be used when
-            // node.weights is undefined. When mesh.weights is undefined, the default
-            // targets' weights are zeros.
+            // A mesh with morph targets MAY also define an optional
+            // mesh.weights property that stores the default targets' weights.
+            // These weights MUST be used when node.weights is undefined. When
+            // mesh.weights is undefined, the default targets' weights are
+            // zeros.
             let weights = if weights.is_empty() {
                 if let Some(mesh) = node.mesh() {
                     meshes[mesh.index()].weights.clone()

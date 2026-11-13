@@ -126,13 +126,19 @@ impl DrawCalls {
     ) -> Self {
         let supported_features = ctx.get_adapter().features();
         log::trace!("supported features: {supported_features:#?}");
-        let can_use_multi_draw_indirect = ctx.get_adapter().features().contains(
-            wgpu::Features::INDIRECT_FIRST_INSTANCE | wgpu::Features::MULTI_DRAW_INDIRECT,
-        );
+        let can_use_multi_draw_indirect = ctx
+            .get_adapter()
+            .features()
+            .contains(wgpu::Features::INDIRECT_FIRST_INSTANCE)
+            && ctx
+                .get_adapter()
+                .get_downlevel_capabilities()
+                .flags
+                .contains(wgpu::DownlevelFlags::INDIRECT_EXECUTION);
         if use_compute_culling && !can_use_multi_draw_indirect {
             log::warn!(
-                "`use_compute_culling` is `true`, but the MULTI_DRAW_INDIRECT feature is not \
-                 available. No compute culling will occur."
+                "`use_compute_culling` is `true`, but multi-draw indirect is not available. No \
+                 compute culling will occur."
             )
         }
         let can_use_compute_culling = use_compute_culling && can_use_multi_draw_indirect;
@@ -211,8 +217,8 @@ impl DrawCalls {
         depth_texture: &Texture,
     ) -> Result<Option<SlabBuffer<wgpu::Buffer>>, CullingError> {
         let num_draw_calls = self.draw_count();
-        // Only do compute culling if there are things we need to draw, otherwise
-        // `wgpu` will err with something like:
+        // Only do compute culling if there are things we need to draw,
+        // otherwise `wgpu` will err with something like:
         // "Buffer with 'indirect draw upkeep' label binding size is zero"
         if num_draw_calls > 0 {
             log::trace!("num_draw_calls: {num_draw_calls}");
@@ -223,8 +229,9 @@ impl DrawCalls {
             if let Some(indirect) = &mut self.drawing_strategy.indirect {
                 if indirect.draws.len() != self.renderlets.len() {
                     indirect.invalidate();
-                    // Pre-upkeep to reclaim resources - this is necessary because
-                    // the draw buffer has to be contiguous (it can't start with a bunch of trash)
+                    // Pre-upkeep to reclaim resources - this is necessary
+                    // because the draw buffer has to be contiguous (it can't
+                    // start with a bunch of trash)
                     let indirect_buffer = indirect.slab.commit();
                     if indirect_buffer.is_new_this_commit() {
                         log::warn!("new indirect buffer");

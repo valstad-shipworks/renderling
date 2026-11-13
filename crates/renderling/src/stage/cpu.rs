@@ -6,7 +6,7 @@ use core::{
 use craballoc::prelude::*;
 use crabslab::Id;
 use glam::{Mat4, UVec2, Vec4};
-use snafu::{ResultExt, Snafu};
+use snafu::Snafu;
 use std::sync::{atomic::AtomicBool, Arc, Mutex, RwLock};
 
 #[cfg(gltf)]
@@ -229,7 +229,8 @@ impl PrimitiveBindGroup<'_> {
 
 /// Performs a rendering of an entire scene, given the resources at hand.
 pub(crate) struct StageRendering<'a> {
-    // TODO: include the rest of the needed paramaters from `stage`, and then remove `stage`
+    // TODO: include the rest of the needed paramaters from `stage`, and then
+    // remove `stage`
     pub stage: &'a Stage,
     pub pipeline: &'a wgpu::RenderPipeline,
     pub direct: Option<&'a DirectPipelines>,
@@ -289,7 +290,8 @@ impl StageRendering<'_> {
 
         let mut draw_calls = self.stage.draw_calls.write().expect("draw_calls write");
         let depth_texture = self.stage.depth_texture.read().expect("depth_texture read");
-        // UNWRAP: safe because we know the depth texture format will always match
+        // UNWRAP: safe because we know the depth texture format will always
+        // match
         let maybe_indirect_buffer = draw_calls.pre_draw(&depth_texture).unwrap();
 
         log::trace!("rendering");
@@ -301,6 +303,7 @@ impl StageRendering<'_> {
             .create_command_encoder(&wgpu::CommandEncoderDescriptor { label });
         {
             let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                multiview_mask: None,
                 label,
                 color_attachments: &[Some(self.color_attachment)],
                 depth_stencil_attachment: Some(self.depth_stencil_attachment),
@@ -544,14 +547,15 @@ impl AsRef<Lighting> for Stage {
 }
 
 #[cfg(gltf)]
+use snafu::ResultExt;
+
+#[cfg(gltf)]
 /// GLTF functions
 impl Stage {
     pub fn load_gltf_document_from_path(
         &self,
         path: impl AsRef<std::path::Path>,
     ) -> Result<GltfDocument, StageError> {
-        use snafu::ResultExt;
-
         let (document, buffers, images) =
             gltf::import(&path).with_context(|_| crate::gltf::GltfSnafu {
                 path: Some(path.as_ref().to_path_buf()),
@@ -1231,11 +1235,12 @@ impl Stage {
         let bind_group_layout = Self::primitive_pipeline_bindgroup_layout(device);
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label,
-            bind_group_layouts: &[&bind_group_layout],
-            push_constant_ranges: &[],
+            bind_group_layouts: &[Some(&bind_group_layout)],
+            immediate_size: 0,
         });
 
         device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            multiview_mask: None,
             label,
             layout: Some(&layout),
             vertex: wgpu::VertexState {
@@ -1255,8 +1260,8 @@ impl Stage {
             },
             depth_stencil: Some(wgpu::DepthStencilState {
                 format: wgpu::TextureFormat::Depth32Float,
-                depth_write_enabled: true,
-                depth_compare: wgpu::CompareFunction::Less,
+                depth_write_enabled: Some(true),
+                depth_compare: Some(wgpu::CompareFunction::Less),
                 stencil: wgpu::StencilState::default(),
                 bias: wgpu::DepthBiasState::default(),
             }),
@@ -1275,7 +1280,6 @@ impl Stage {
                 })],
                 compilation_options: Default::default(),
             }),
-            multiview: None,
             cache: None,
         })
     }
@@ -1305,7 +1309,8 @@ impl Stage {
         let depth_texture =
             Texture::create_depth_texture(device, w, h, multisample_count, Some("stage-depth"));
         let msaa_render_target = Default::default();
-        // UNWRAP: safe because no other references at this point (created above^)
+        // UNWRAP: safe because no other references at this point (created
+        // above^)
         let bloom = Bloom::new(ctx, &hdr_texture.read().expect("hdr_texture read"));
         let tonemapping = Tonemapping::new(
             runtime,
@@ -2046,8 +2051,8 @@ mod test {
                 .device
                 .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                     label: None,
-                    bind_group_layouts: &[&bindgroup_layout],
-                    push_constant_ranges: &[],
+                    bind_group_layouts: &[Some(&bindgroup_layout)],
+                    immediate_size: 0,
                 });
 
         let vertex = crate::linkage::slabbed_vertices::linkage(&runtime.device);
@@ -2055,6 +2060,7 @@ mod test {
         let pipeline = runtime
             .device
             .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                multiview_mask: None,
                 label: None,
                 cache: None,
                 layout: Some(&pipeline_layout),
@@ -2089,7 +2095,6 @@ mod test {
                         write_mask: wgpu::ColorWrites::ALL,
                     })],
                 }),
-                multiview: None,
             });
         let slab_buffer = slab.commit();
 
@@ -2108,6 +2113,7 @@ mod test {
         let mut encoder = runtime.device.create_command_encoder(&Default::default());
         {
             let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                multiview_mask: None,
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &frame.view(),
                     resolve_target: None,

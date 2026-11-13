@@ -265,7 +265,8 @@ impl Atlas {
         }
         queue.submit(Some(encoder.finish()));
 
-        // A depth atlas holds shadow maps, read through 2x2 comparison filtering.
+        // A depth atlas holds shadow maps, read through 2x2 comparison
+        // filtering.
         let is_depth = texture.format().is_depth_stencil_format();
         let filter = if is_depth {
             wgpu::FilterMode::Linear
@@ -278,7 +279,7 @@ impl Atlas {
             address_mode_w: wgpu::AddressMode::ClampToEdge,
             mag_filter: filter,
             min_filter: filter,
-            mipmap_filter: wgpu::FilterMode::Nearest,
+            mipmap_filter: wgpu::MipmapFilterMode::Nearest,
             compare: is_depth.then_some(wgpu::CompareFunction::LessEqual),
             ..Default::default()
         };
@@ -499,8 +500,8 @@ impl Atlas {
 
         if total_dropped > 0 {
             log::trace!("repacking after dropping {total_dropped} frames from the atlas");
-            // UNWRAP: safe because we can only remove frames from the atlas, which should
-            // only make it easier to pack.
+            // UNWRAP: safe because we can only remove frames from the atlas,
+            // which should only make it easier to pack.
             self.resize(runtime.as_ref(), self.get_size()).unwrap();
             true
         } else {
@@ -789,7 +790,8 @@ impl StagedResources {
             if packed_items.items.is_empty() {
                 continue;
             }
-            // UNWRAP: safe because we know this index exists because we created it above
+            // UNWRAP: safe because we know this index exists because we created
+            // it above
             let layer = temporary_layers.get_mut(layer_index).unwrap();
             for (frame_index, crunch::PackedItem { data: item, rect }) in
                 packed_items.items.into_iter().enumerate()
@@ -867,8 +869,8 @@ impl StagedResources {
                         let prev_t = texture.cache;
                         let mut t = texture.cache;
                         debug_assert_eq!(t.size_px, size_px);
-                        // copy the frame from the old texture to the new texture
-                        // in a new destination
+                        // copy the frame from the old texture to the new
+                        // texture in a new destination
                         if let Some(blitter) = depth_blitter {
                             blitter.blit(
                                 &runtime.device,
@@ -994,8 +996,8 @@ impl DepthBlitter {
         });
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("depth-blit"),
-            bind_group_layouts: &[&layout],
-            push_constant_ranges: &[],
+            bind_group_layouts: &[Some(&layout)],
+            immediate_size: 0,
         });
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("depth-blit"),
@@ -1009,8 +1011,8 @@ impl DepthBlitter {
             primitive: wgpu::PrimitiveState::default(),
             depth_stencil: Some(wgpu::DepthStencilState {
                 format,
-                depth_write_enabled: true,
-                depth_compare: wgpu::CompareFunction::Always,
+                depth_write_enabled: Some(true),
+                depth_compare: Some(wgpu::CompareFunction::Always),
                 stencil: wgpu::StencilState::default(),
                 bias: wgpu::DepthBiasState::default(),
             }),
@@ -1021,7 +1023,7 @@ impl DepthBlitter {
                 compilation_options: Default::default(),
                 targets: &[],
             }),
-            multiview: None,
+            multiview_mask: None,
             cache: None,
         });
         Self { pipeline, layout }
@@ -1243,6 +1245,7 @@ impl AtlasBlittingOperation {
                 array_layer_count: Some(1),
             });
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            multiview_mask: None,
             label: Some("atlas-blitter"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                 view: &atlas_view,
@@ -1340,13 +1343,14 @@ impl AtlasBlitter {
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("atlas-blitter"),
-            bind_group_layouts: &[&bind_group_layout],
-            push_constant_ranges: &[],
+            bind_group_layouts: &[Some(&bind_group_layout)],
+            immediate_size: 0,
         });
 
         let vertex = crate::linkage::atlas_blit_vertex::linkage(device);
         let fragment = crate::linkage::atlas_blit_fragment::linkage(device);
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            multiview_mask: None,
             label: Some("atlas-blitter"),
             layout: Some(&pipeline_layout),
             vertex: wgpu::VertexState {
@@ -1376,7 +1380,6 @@ impl AtlasBlitter {
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
             }),
-            multiview: None,
             cache: None,
         });
 
@@ -1458,7 +1461,8 @@ mod test {
     }
 
     #[test]
-    // Ensures that textures with different wrapping modes are rendered correctly.
+    // Ensures that textures with different wrapping modes are rendered
+    // correctly.
     fn uv_wrapping() {
         let icon_w = 32;
         let icon_h = 41;
@@ -1689,7 +1693,8 @@ mod test {
 
     #[test]
     fn upkeep_trims_the_atlas() {
-        // tests that Atlas::upkeep trims out unused images and repacks the atlas
+        // tests that Atlas::upkeep trims out unused images and repacks the
+        // atlas
         let ctx = Context::headless(100, 100)
             .block()
             .with_default_atlas_texture_size(UVec3::new(512, 512, 2));

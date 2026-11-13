@@ -51,12 +51,13 @@ fn create_bloom_downsample_pipeline(device: &wgpu::Device) -> wgpu::RenderPipeli
     let bindgroup_layout = create_bindgroup_layout(device, label);
     let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label,
-        bind_group_layouts: &[&bindgroup_layout],
-        push_constant_ranges: &[],
+        bind_group_layouts: &[Some(&bindgroup_layout)],
+        immediate_size: 0,
     });
     let vertex_module = crate::linkage::bloom_vertex::linkage(device);
     let fragment_module = crate::linkage::bloom_downsample_fragment::linkage(device);
     device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        multiview_mask: None,
         label,
         layout: Some(&layout),
         vertex: wgpu::VertexState {
@@ -86,7 +87,6 @@ fn create_bloom_downsample_pipeline(device: &wgpu::Device) -> wgpu::RenderPipeli
             })],
             compilation_options: Default::default(),
         }),
-        multiview: None,
         cache: None,
     })
 }
@@ -96,12 +96,13 @@ fn create_bloom_upsample_pipeline(device: &wgpu::Device) -> wgpu::RenderPipeline
     let bindgroup_layout = create_bindgroup_layout(device, label);
     let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label,
-        bind_group_layouts: &[&bindgroup_layout],
-        push_constant_ranges: &[],
+        bind_group_layouts: &[Some(&bindgroup_layout)],
+        immediate_size: 0,
     });
     let vertex_module = crate::linkage::bloom_vertex::linkage(device);
     let fragment_module = crate::linkage::bloom_upsample_fragment::linkage(device);
     device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        multiview_mask: None,
         label,
         layout: Some(&layout),
         vertex: wgpu::VertexState {
@@ -131,7 +132,6 @@ fn create_bloom_upsample_pipeline(device: &wgpu::Device) -> wgpu::RenderPipeline
             })],
             compilation_options: Default::default(),
         }),
-        multiview: None,
         cache: None,
     })
 }
@@ -158,7 +158,7 @@ fn create_texture(
             address_mode_w: wgpu::AddressMode::ClampToEdge,
             mag_filter: wgpu::FilterMode::Linear,
             min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::MipmapFilterMode::Linear,
             ..Default::default()
         });
     Texture::new_with(
@@ -301,12 +301,13 @@ fn create_mix_pipeline(device: &wgpu::Device) -> wgpu::RenderPipeline {
     });
     let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label,
-        bind_group_layouts: &[&bindgroup_layout],
-        push_constant_ranges: &[],
+        bind_group_layouts: &[Some(&bindgroup_layout)],
+        immediate_size: 0,
     });
     let vertex_module = crate::linkage::bloom_vertex::linkage(device);
     let fragment_module = crate::linkage::bloom_mix_fragment::linkage(device);
     device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        multiview_mask: None,
         label,
         layout: Some(&layout),
         vertex: wgpu::VertexState {
@@ -336,7 +337,6 @@ fn create_mix_pipeline(device: &wgpu::Device) -> wgpu::RenderPipeline {
             })],
             compilation_options: Default::default(),
         }),
-        multiview: None,
         cache: None,
     })
 }
@@ -561,10 +561,10 @@ impl Bloom {
         }
         // Get all the bindgroups (which are what we're reading from),
         // starting with the hdr frame.
-        // Since `bindgroups` are one element greater (we pushed `hdr_texture_bindgroup`
-        // to the front) the last bindgroup will not be used, which is good - we
-        // don't need to read from the smallest texture during downsampling.
-        // UNWRAP: not safe but we want to panic
+        // Since `bindgroups` are one element greater (we pushed
+        // `hdr_texture_bindgroup` to the front) the last bindgroup will not be
+        // used, which is good - we don't need to read from the smallest texture
+        // during downsampling. UNWRAP: not safe but we want to panic
         let textures_guard = self.textures.read().expect("bloom textures read");
         let hdr_texture_downsample_bindgroup_guard = self
             .hdr_texture_downsample_bindgroup
@@ -597,6 +597,7 @@ impl Bloom {
             let label = Some(title.as_str());
             {
                 let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    multiview_mask: None,
                     label,
                     color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                         view,
@@ -641,6 +642,7 @@ impl Bloom {
             let label = Some(title.as_str());
             {
                 let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    multiview_mask: None,
                     label,
                     color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                         view,
@@ -670,6 +672,7 @@ impl Bloom {
         let mix_bindgroup = self.mix_bindgroup.read().expect("bloom mix_bindgroup read");
         {
             let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                multiview_mask: None,
                 label,
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &mix_texture.view,

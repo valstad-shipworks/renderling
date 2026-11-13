@@ -402,7 +402,8 @@ impl Geometry {
     pub fn use_camera(&self, camera: &Camera) {
         let id = camera.id();
         log::info!("using camera: {id:?}");
-        // Save a clone so we never lose the active camera, even if the user drops it
+        // Save a clone so we never lose the active camera, even if the user
+        // drops it
         self.descriptor.modify(|cfg| cfg.camera_id = id);
         *self.camera.lock().expect("geometry camera lock") = Some(camera.clone());
     }
@@ -464,8 +465,8 @@ pub struct Skin {
     _skin_joints: Arc<Mutex<Vec<SkinJoint>>>,
     // Contains the 4x4 inverse-bind matrices.
     //
-    // When None, each matrix is assumed to be the 4x4 identity matrix which implies that the
-    // inverse-bind matrices were pre-applied.
+    // When None, each matrix is assumed to be the 4x4 identity matrix which
+    // implies that the inverse-bind matrices were pre-applied.
     _inverse_bind_matrices: Arc<Mutex<Option<GpuArray<Mat4>>>>,
 }
 
@@ -509,7 +510,8 @@ impl Skin {
         Skin {
             descriptor,
             joints: slab.new_array(joints),
-            // We hold on to the transforms so they don't get dropped if the user drops them.
+            // We hold on to the transforms so they don't get dropped if the
+            // user drops them.
             _skin_joints: Arc::new(Mutex::new(skin_joints)),
             _inverse_bind_matrices: Arc::new(Mutex::new(inverse_bind_matrices)),
         }

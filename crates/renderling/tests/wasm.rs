@@ -155,6 +155,7 @@ async fn can_clear_background_sanity() {
     let mut encoder = device.create_command_encoder(&Default::default());
     {
         let _render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            multiview_mask: None,
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                 view: &view,
                 ops: wgpu::Operations {
@@ -194,6 +195,7 @@ async fn implicit_isosceles_triangle() {
         runtime
             .device
             .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                multiview_mask: None,
                 label: None,
                 layout: None,
                 vertex: wgpu::VertexState {
@@ -227,11 +229,11 @@ async fn implicit_isosceles_triangle() {
                     })],
                     compilation_options: wgpu::PipelineCompilationOptions::default(),
                 }),
-                multiview: None,
                 cache: None,
             })
     }
-    // The first time through render with handwritten WGSL to ensure the setup works
+    // The first time through render with handwritten WGSL to ensure the setup
+    // works
     let hand_written_wgsl_pipeline = {
         let vertex = runtime.device.create_shader_module(wgpu::include_wgsl!(
             "../src/tutorial/implicit_isosceles_vertex.wgsl"
@@ -241,8 +243,8 @@ async fn implicit_isosceles_triangle() {
             .create_shader_module(wgpu::include_wgsl!("../src/tutorial/passthru.wgsl"));
         create_pipeline(runtime, &vertex, "main", &fragment, "main")
     };
-    // The second time render with WGSL that is transpiled from Rust code and pulled
-    // in through the renderling linkage machinery.
+    // The second time render with WGSL that is transpiled from Rust code and
+    // pulled in through the renderling linkage machinery.
     let linkage_pipeline = {
         let vertex = renderling::linkage::implicit_isosceles_vertex::linkage(&runtime.device);
         let fragment = renderling::linkage::passthru_fragment::linkage(&runtime.device);
@@ -261,6 +263,7 @@ async fn implicit_isosceles_triangle() {
             .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
         {
             let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                multiview_mask: None,
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &frame.view(),
                     resolve_target: None,
@@ -358,8 +361,8 @@ async fn slabbed_vertices_no_instance() {
         .device
         .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: None,
-            bind_group_layouts: &[&bindgroup_layout],
-            push_constant_ranges: &[],
+            bind_group_layouts: &[Some(&bindgroup_layout)],
+            immediate_size: 0,
         });
     let pipeline = {
         let vertex = renderling::linkage::slabbed_vertices_no_instance::linkage(&runtime.device);
@@ -367,6 +370,7 @@ async fn slabbed_vertices_no_instance() {
         runtime
             .device
             .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                multiview_mask: None,
                 label: None,
                 layout: Some(&pipeline_layout),
                 vertex: wgpu::VertexState {
@@ -400,7 +404,6 @@ async fn slabbed_vertices_no_instance() {
                     })],
                     compilation_options: wgpu::PipelineCompilationOptions::default(),
                 }),
-                multiview: None,
                 cache: None,
             })
     };
@@ -426,6 +429,7 @@ async fn slabbed_vertices_no_instance() {
         .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
     {
         let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            multiview_mask: None,
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                 view: &view,
                 resolve_target: None,
@@ -492,8 +496,8 @@ async fn slabbed_isosceles_triangle() {
         .device
         .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: None,
-            bind_group_layouts: &[&bindgroup_layout],
-            push_constant_ranges: &[],
+            bind_group_layouts: &[Some(&bindgroup_layout)],
+            immediate_size: 0,
         });
 
     let vertex = renderling::linkage::slabbed_vertices::linkage(&runtime.device);
@@ -501,6 +505,7 @@ async fn slabbed_isosceles_triangle() {
     let pipeline = runtime
         .device
         .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            multiview_mask: None,
             label: None,
             cache: None,
             layout: Some(&pipeline_layout),
@@ -535,7 +540,6 @@ async fn slabbed_isosceles_triangle() {
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
             }),
-            multiview: None,
         });
     let slab_buffer = slab.commit();
 
@@ -554,6 +558,7 @@ async fn slabbed_isosceles_triangle() {
     let mut encoder = runtime.device.create_command_encoder(&Default::default());
     {
         let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            multiview_mask: None,
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                 view: &frame.view(),
                 resolve_target: None,
@@ -645,8 +650,8 @@ async fn slabbed_isosceles_triangle() {
 //     let pipeline_layout =
 // device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
 //         label,
-//         bind_group_layouts: &[&bindgroup_layout],
-//         push_constant_ranges: &[],
+//         bind_group_layouts: &[Some(&bindgroup_layout)],
+//         immediate_size: 0,
 //     });
 
 //     let pipeline =
@@ -671,8 +676,8 @@ async fn slabbed_isosceles_triangle() {
 //         },
 //         depth_stencil: Some(wgpu::DepthStencilState {
 //             format: wgpu::TextureFormat::Depth32Float,
-//             depth_write_enabled: true,
-//             depth_compare: wgpu::CompareFunction::Less,
+//             depth_write_enabled: Some(true),
+//             depth_compare: Some(wgpu::CompareFunction::Less),
 //             stencil: wgpu::StencilState::default(),
 //             bias: wgpu::DepthBiasState::default(),
 //         }),
@@ -853,8 +858,8 @@ async fn slabbed_isosceles_triangle() {
 //         });
 //         let pipeline_layout =
 // device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-// label,             bind_group_layouts: &[&bindgroup_layout],
-//             push_constant_ranges: &[],
+// label,             bind_group_layouts: &[Some(&bindgroup_layout)],
+//             immediate_size: 0,
 //         });
 
 //         let pipeline =
@@ -878,8 +883,8 @@ async fn slabbed_isosceles_triangle() {
 //             },
 //             depth_stencil: Some(wgpu::DepthStencilState {
 //                 format: wgpu::TextureFormat::Depth32Float,
-//                 depth_write_enabled: true,
-//                 depth_compare: wgpu::CompareFunction::Less,
+//                 depth_write_enabled: Some(true),
+//                 depth_compare: Some(wgpu::CompareFunction::Less),
 //                 stencil: wgpu::StencilState::default(),
 //                 bias: wgpu::DepthBiasState::default(),
 //             }),

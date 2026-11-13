@@ -118,11 +118,12 @@ impl Tonemapping {
         let hdr_layout = bindgroup_layout(device, label);
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label,
-            bind_group_layouts: &[&hdr_layout],
-            push_constant_ranges: &[],
+            bind_group_layouts: &[Some(&hdr_layout)],
+            immediate_size: 0,
         });
         let pipeline = Arc::new(
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                multiview_mask: None,
                 label,
                 layout: Some(&layout),
                 vertex: wgpu::VertexState {
@@ -152,7 +153,6 @@ impl Tonemapping {
                     compilation_options: Default::default(),
                 }),
                 multisample: wgpu::MultisampleState::default(),
-                multiview: None,
                 cache: None,
             }),
         );
@@ -170,8 +170,8 @@ impl Tonemapping {
     }
 
     pub fn set_hdr_texture(&self, device: &wgpu::Device, hdr_texture: &Texture) {
-        // UNWRAP: safe because the buffer is created in `Self::new` and guaranteed to
-        // exist
+        // UNWRAP: safe because the buffer is created in `Self::new` and
+        // guaranteed to exist
         let slab_buffer = self.slab.get_buffer().unwrap();
         let bindgroup = create_bindgroup(device, Some("tonemapping"), hdr_texture, &slab_buffer);
         // UNWRAP: not safe but we want to panic
@@ -198,6 +198,7 @@ impl Tonemapping {
         let bindgroup = self.bindgroup.read().expect("tonemapping bindgroup read");
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label });
         let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            multiview_mask: None,
             label,
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                 view,
