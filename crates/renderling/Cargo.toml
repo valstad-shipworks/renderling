@@ -1,10 +1,10 @@
 [package]
 publish = ["forgejo"]
 name = "renderling"
-version = "0.6.8"
+version = "0.6.9"
 edition = "2021"
 description = "User-friendly real-time rendering. 🍖"
-repository = "https://github.com/schell/renderling"
+repository = "https://github.com/valstad-shipworks/renderling"
 license = "MIT OR Apache-2.0"
 keywords = ["game", "graphics", "shader", "rendering"]
 categories = ["rendering", "game-development", "graphics"]
@@ -66,7 +66,7 @@ futures-lite = { workspace = true, optional = true }
 glam = { workspace = true, features = ["std"] }
 gltf = {workspace = true, optional = true}
 half = "2.3"
-image = {workspace = true, features = ["hdr"]}
+image = { version = "0.25", default-features = false, features = ["hdr", "jpeg", "png"] }
 log = {workspace = true}
 plotters = { workspace = true, optional = true }
 pretty_assertions.workspace = true
